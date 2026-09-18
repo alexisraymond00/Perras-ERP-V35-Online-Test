@@ -1,0 +1,566 @@
+{
+  "users": [
+    {
+      "id": "u_admin",
+      "name": "Admin 1",
+      "username": "admin1",
+      "phone": "",
+      "role": "admin",
+      "active": true,
+      "title": "Administrateur"
+    },
+    {
+      "id": "u_admin2",
+      "name": "Admin 2",
+      "username": "admin2",
+      "phone": "",
+      "role": "admin",
+      "active": true,
+      "title": "Administrateur"
+    },
+    {
+      "id": "u_bureau",
+      "name": "Bureau 1",
+      "username": "bureau1",
+      "phone": "",
+      "role": "bureau",
+      "active": true,
+      "title": "Bureau"
+    },
+    {
+      "id": "u_bureau2",
+      "name": "Bureau 2",
+      "username": "bureau2",
+      "phone": "",
+      "role": "bureau",
+      "active": true,
+      "title": "Bureau"
+    },
+    {
+      "id": "u_tech1",
+      "name": "Tech 1",
+      "username": "tech1",
+      "phone": "",
+      "role": "tech",
+      "active": true,
+      "title": "Technicien",
+      "truckId": "t101"
+    }
+  ],
+  "trucks": [
+    {
+      "id": "t101",
+      "number": "101",
+      "description": "Ford Transit - Service",
+      "assignedUserId": "u_tech1",
+      "active": true
+    },
+    {
+      "id": "t102",
+      "number": "102",
+      "description": "Ram ProMaster - Service",
+      "assignedUserId": "",
+      "active": true
+    },
+    {
+      "id": "t103",
+      "number": "103",
+      "description": "Camion installation",
+      "assignedUserId": "",
+      "active": true
+    }
+  ],
+  "clients": [
+    {
+      "id": "c1",
+      "name": "Construction ABC",
+      "phone": "4505551212",
+      "address": "120 rue Principale, Farnham",
+      "email": "compta@abc.ca",
+      "priceList": "Perras 1",
+      "notes": "",
+      "suspended": false
+    },
+    {
+      "id": "c2",
+      "name": "Mme Tremblay",
+      "phone": "4505552323",
+      "address": "48 rue des Érables, Cowansville",
+      "email": "",
+      "priceList": "Perras 2",
+      "notes": "Appeler avant de se déplacer.",
+      "suspended": false
+    },
+    {
+      "id": "c3",
+      "name": "Gestion Immo Rive-Sud",
+      "phone": "4505553434",
+      "address": "775 boul. Industriel, Granby",
+      "email": "service@immo.ca",
+      "priceList": "Perras 1",
+      "notes": "",
+      "suspended": false
+    }
+  ],
+  "serviceCalls": [
+    {
+      "id": "bt-1001",
+      "btNumber": "",
+      "poNumber": "PO-ABC-241",
+      "clientId": "c1",
+      "date": "2026-09-18",
+      "time": "08:00",
+      "duration": 90,
+      "address": "120 rue Principale, Farnham",
+      "category": "Plomberie générale",
+      "description": "Fuite sous évier de cuisine",
+      "type": "BT",
+      "techId": "u_tech1",
+      "status": "Planifié",
+      "photos": 1,
+      "manualClientName": "",
+      "contactPhone": "",
+      "minimumCallId": "",
+      "extraMinutes": 0,
+      "work": "",
+      "parts": "",
+      "notes": "",
+      "signature": ""
+    },
+    {
+      "id": "bt-1002",
+      "btNumber": "",
+      "poNumber": "",
+      "clientId": "c2",
+      "date": "2026-09-18",
+      "time": "10:30",
+      "duration": 60,
+      "address": "48 rue des Érables, Cowansville",
+      "category": "Chauffe-eau",
+      "description": "Vérification chauffe-eau vieillissant",
+      "type": "BT",
+      "techId": "u_tech1",
+      "status": "Planifié",
+      "photos": 1,
+      "manualClientName": "",
+      "contactPhone": "",
+      "minimumCallId": "",
+      "extraMinutes": 0,
+      "work": "",
+      "parts": "",
+      "notes": "",
+      "signature": ""
+    },
+    {
+      "id": "fac-10482",
+      "poNumber": "PO-IMMO-77",
+      "clientId": "c3",
+      "date": "2026-09-18",
+      "time": "09:00",
+      "duration": 120,
+      "address": "775 boul. Industriel, Granby",
+      "category": "Drain",
+      "description": "Drain lent au local 204",
+      "type": "Facture",
+      "invoiceNumber": "",
+      "techId": "u_tech1",
+      "status": "Planifié",
+      "photos": 1,
+      "manualClientName": "",
+      "contactPhone": "",
+      "minimumCallId": "",
+      "extraMinutes": 0,
+      "work": "",
+      "parts": "",
+      "notes": "",
+      "signature": ""
+    }
+  ],
+  "minimumCalls": [
+    {
+      "id": "mc_standard",
+      "name": "Standard",
+      "durationMinutes": 60,
+      "price": 0,
+      "active": true
+    },
+    {
+      "id": "mc_vaudreuil",
+      "name": "Vaudreuil",
+      "durationMinutes": 120,
+      "price": 0,
+      "active": true
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task1",
+      "userId": "u_admin",
+      "clientId": "c1",
+      "title": "Valider la soumission plomberie",
+      "due": "2026-09-18",
+      "priority": "Normale",
+      "status": "À faire",
+      "note": ""
+    },
+    {
+      "id": "task2",
+      "userId": "u_bureau",
+      "clientId": "c2",
+      "title": "Rappeler pour le chauffe-eau",
+      "due": "2026-09-18",
+      "priority": "Haute",
+      "status": "À faire",
+      "note": "Proposer une plage de remplacement."
+    }
+  ],
+  "heaters": [
+    {
+      "id": "wh1",
+      "clientId": "c2",
+      "brand": "Giant",
+      "model": "152ETE",
+      "serial": "GNT-298445",
+      "installDate": "2017-03-18",
+      "capacity": "60 gal",
+      "type": "Électrique"
+    }
+  ],
+  "truckStock": [
+    {
+      "truckId": "t101",
+      "productId": "p1",
+      "qty": 8
+    },
+    {
+      "truckId": "t101",
+      "productId": "p2",
+      "qty": 15
+    },
+    {
+      "truckId": "t101",
+      "productId": "p3",
+      "qty": 2
+    },
+    {
+      "truckId": "t102",
+      "productId": "p1",
+      "qty": 5
+    },
+    {
+      "truckId": "t102",
+      "productId": "p2",
+      "qty": 10
+    }
+  ],
+  "pricing": {
+    "discounts": {
+      "Perras 1": 5,
+      "Perras 2": 10,
+      "Perras 3": 15
+    },
+    "markupByCategory": {
+      "default": 50
+    },
+    "markupByPriceCategory": {},
+    "calculatedDiscounts": {},
+    "annualReturnPct": 12
+  },
+  "supplierCategories": [
+    {
+      "id": "cat_chauffage",
+      "name": "Chauffage"
+    },
+    {
+      "id": "cat_drainage",
+      "name": "Drainage"
+    },
+    {
+      "id": "cat_traitement_eau",
+      "name": "Traitement eau"
+    }
+  ],
+  "suppliers": [
+    {
+      "id": "s1",
+      "name": "Deschênes",
+      "paymentTerms": "2% 10 jours / net 30",
+      "paymentDiscountPct": 2,
+      "discountDays": 10,
+      "netDays": 30,
+      "capitalYieldPct": 0,
+      "selectedPaymentOptionId": "pt_s1_1",
+      "paymentOptions": [
+        {
+          "id": "pt_s1_1",
+          "label": "2% 10 jours / net 30",
+          "paymentDiscountPct": 2,
+          "discountDays": 10,
+          "netDays": 30,
+          "capitalYieldPct": 0
+        },
+        {
+          "id": "pt_s1_2",
+          "label": "Net 60",
+          "paymentDiscountPct": 0,
+          "discountDays": 0,
+          "netDays": 60,
+          "capitalYieldPct": 0
+        }
+      ],
+      "rebates": {
+        "cat_chauffage": 32,
+        "cat_drainage": 28,
+        "cat_traitement_eau": 25
+      }
+    },
+    {
+      "id": "s2",
+      "name": "Wolseley",
+      "paymentTerms": "Net 30",
+      "paymentDiscountPct": 0,
+      "discountDays": 0,
+      "netDays": 30,
+      "capitalYieldPct": 0,
+      "selectedPaymentOptionId": "pt_s2_1",
+      "paymentOptions": [
+        {
+          "id": "pt_s2_1",
+          "label": "Net 30",
+          "paymentDiscountPct": 0,
+          "discountDays": 0,
+          "netDays": 30,
+          "capitalYieldPct": 0
+        }
+      ],
+      "rebates": {
+        "cat_chauffage": 35,
+        "cat_drainage": 30,
+        "cat_traitement_eau": 25
+      }
+    },
+    {
+      "id": "s3",
+      "name": "EMCO",
+      "paymentTerms": "Net 30",
+      "paymentDiscountPct": 0,
+      "discountDays": 0,
+      "netDays": 30,
+      "capitalYieldPct": 0,
+      "selectedPaymentOptionId": "pt_s3_1",
+      "paymentOptions": [
+        {
+          "id": "pt_s3_1",
+          "label": "Net 30",
+          "paymentDiscountPct": 0,
+          "discountDays": 0,
+          "netDays": 30,
+          "capitalYieldPct": 0
+        }
+      ],
+      "rebates": {
+        "cat_chauffage": 30,
+        "cat_drainage": 28,
+        "cat_traitement_eau": 20
+      }
+    }
+  ],
+  "supplierOffers": [
+    {
+      "id": "o1",
+      "productId": "p1",
+      "supplierId": "s1",
+      "supplier": "Deschênes",
+      "supplierList": 11.4
+    },
+    {
+      "id": "o2",
+      "productId": "p1",
+      "supplierId": "s2",
+      "supplier": "Wolseley",
+      "supplierList": 11
+    },
+    {
+      "id": "o3",
+      "productId": "p1",
+      "supplierId": "s3",
+      "supplier": "EMCO",
+      "supplierList": 12.25
+    }
+  ],
+  "purchaseOrders": [
+    {
+      "id": "po1",
+      "number": "26-0001",
+      "buyerId": "u_admin",
+      "date": "2026-09-18",
+      "supplierId": "s1",
+      "supplier": "Deschênes",
+      "status": "Commandé",
+      "total": 1280.45,
+      "items": [
+        {
+          "id": "poi1",
+          "productId": "p2",
+          "qty": 60,
+          "receivedQty": 0,
+          "unitCost": 2.2,
+          "backorderResolvedQty": 0
+        }
+      ]
+    },
+    {
+      "id": "po2",
+      "number": "26-0002",
+      "buyerId": "u_admin",
+      "date": "2026-09-18",
+      "supplierId": "s2",
+      "supplier": "Wolseley",
+      "status": "À envoyer",
+      "total": 642.1,
+      "items": [
+        {
+          "id": "poi2",
+          "productId": "p3",
+          "qty": 24,
+          "receivedQty": 0,
+          "unitCost": 13.4,
+          "backorderResolvedQty": 0
+        }
+      ]
+    }
+  ],
+  "googleBusinesses": [
+    {
+      "id": "gb1",
+      "name": "Plomberie Pompe Perras",
+      "accountId": "",
+      "locationId": ""
+    },
+    {
+      "id": "gb2",
+      "name": "Plomberie Saint-Jean",
+      "accountId": "",
+      "locationId": ""
+    },
+    {
+      "id": "gb3",
+      "name": "Plombier Vaudreuil",
+      "accountId": "",
+      "locationId": ""
+    }
+  ],
+  "googleReviews": [],
+  "googleBonusPayments": [],
+  "tools": [
+    {
+      "id": "tool1",
+      "name": "Fichoir RIDGID",
+      "category": "Fichoir",
+      "assetTag": "OUT-001",
+      "truckId": "t101",
+      "assignedUserId": "u_tech1",
+      "notes": "",
+      "active": true
+    },
+    {
+      "id": "tool2",
+      "name": "Échelle 24 pi",
+      "category": "Échelle",
+      "assetTag": "OUT-002",
+      "truckId": "t102",
+      "assignedUserId": "u_tech2",
+      "notes": "",
+      "active": true
+    }
+  ],
+  "permissions": {
+    "admin": {
+      "dashboard": true,
+      "tasks": true,
+      "calendar": true,
+      "calls": true,
+      "clients": true,
+      "bt": true,
+      "invoices": true,
+      "punches": true,
+      "timesheets": true,
+      "minimumcalls": true,
+      "forms": true,
+      "quotes": true,
+      "crm": true,
+      "inventory": true,
+      "products": true,
+      "orders": true,
+      "suppliers": true,
+      "pricing": true,
+      "technicians": true,
+      "trucks": true,
+      "tools": true,
+      "personnel": true,
+      "roles": true,
+      "nexus": true,
+      "tax": true,
+      "reports": true,
+      "settings": true
+    },
+    "bureau": {
+      "dashboard": true,
+      "tasks": true,
+      "calendar": true,
+      "calls": true,
+      "clients": true,
+      "bt": true,
+      "invoices": true,
+      "punches": true,
+      "timesheets": true,
+      "forms": true,
+      "quotes": true,
+      "crm": true,
+      "inventory": true,
+      "products": true,
+      "tools": true,
+      "nexus": true,
+      "tax": true
+    },
+    "tech": {
+      "dashboard": true,
+      "calendar": true,
+      "interventions": true,
+      "clients": true,
+      "bt": true,
+      "timesheets": true,
+      "forms": true,
+      "quotes": true,
+      "inventory": true,
+      "products": true,
+      "mytruck": true,
+      "tools": true,
+      "requestproduct": true,
+      "fieldpos": true,
+      "nexus": true,
+      "tax": true
+    }
+  },
+  "reports": [],
+  "quotes": [],
+  "fieldPOs": [],
+  "productRequests": [],
+  "forms": [],
+  "audit": [],
+  "nexus": [],
+  "settings": {
+    "heaterAlertYears": 10,
+    "company": "Perras Plomberie",
+    "taxGST": 5,
+    "taxQST": 9.975,
+    "numbering": {
+      "activeYear": 2026,
+      "btNextSimple": 1003,
+      "invoiceNextSimple": 1,
+      "btNext": 1003,
+      "poNext": 3,
+      "quoteNext": 1
+    }
+  }
+}

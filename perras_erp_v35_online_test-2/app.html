@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Perras — Gestion</title>
+  <meta name="theme-color" content="#0b2447" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <img class="sidebar-logo" src="assets/perras-logo.png" alt="Perras Commercial Résidentiel Urgence 24/7">
+        <small>COMMERCIAL · RÉSIDENTIEL · URGENCE 24/7</small>
+        <div class="role-badge" id="roleBadge">—</div>
+      </div>
+      <nav class="menu" id="menu"></nav>
+      <div class="sidebar-footer">
+        <button class="menu-item" id="profileBtn"><span class="icon">👤</span>Mon profil</button>
+        <button class="menu-item" id="logoutBtn"><span class="icon">↪</span>Déconnexion</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="btn btn-secondary mobile-menu-btn" id="mobileMenuBtn">☰</button>
+          <div class="topbar-left">
+            <h1 id="pageTitle">Tableau de bord</h1>
+            <p id="pageSubtitle">Toute votre opération au même endroit.</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="user-chip">
+            <div class="avatar" id="avatar">P</div>
+            <div><strong id="userName">Utilisateur</strong><div class="small muted" id="userRole">—</div></div>
+          </div>
+        </div>
+      </header>
+      <section class="content" id="content"></section>
+    </main>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+  <div id="modalRoot"></div>
+
+  <script src="js/cloud.js"></script>
+  <script>
+    (async()=>{
+      function load(src,optional=false){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=optional?resolve:reject;document.body.appendChild(s);});}
+      try{
+        await PerrasCloud.prepareApp();
+        await load('js/data.js');
+        await load('js/auth.js');
+        await load('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',true);
+        await load('js/app.js');
+        PerrasCloud.startPolling();
+        if('serviceWorker' in navigator) navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+      }catch(e){console.error(e);}
+    })();
+  </script>
+</body>
+</html>

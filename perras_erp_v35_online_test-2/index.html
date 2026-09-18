@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0b2447" />
+  <title>Perras ERP V35 Online — Connexion</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-brand">
+      <div>
+        <div class="brand-lockup">
+          <img class="login-logo" src="assets/perras-logo.png" alt="Perras">
+          <p>COMMERCIAL · RÉSIDENTIEL · URGENCE 24/7</p>
+          <div class="brand-tag">Perras ERP · V35 Online Test</div>
+        </div>
+        <div class="login-benefits">
+          <div><span class="check-dot">✓</span> Une seule base commune pour toute l’équipe</div>
+          <div><span class="check-dot">✓</span> Admin, Bureau et Technicien</div>
+          <div><span class="check-dot">✓</span> Ordinateur, tablette et téléphone</div>
+          <div><span class="check-dot">✓</span> Synchronisation automatique des changements</div>
+        </div>
+      </div>
+      <div class="login-visual"><div class="fleet">PERRAS · OPÉRATIONS CONNECTÉES</div></div>
+    </section>
+
+    <section class="login-panel">
+      <div class="login-card">
+        <h2>Connexion V35 Online</h2>
+        <p class="lead">Connectez-vous avec votre compte de test.</p>
+        <form id="loginForm">
+          <div class="field"><label for="username">Identifiant</label><input id="username" autocomplete="username" placeholder="admin1" required /></div>
+          <div class="field"><label for="password">Mot de passe</label><input id="password" type="password" autocomplete="current-password" required /></div>
+          <button class="btn btn-primary btn-block" type="submit">Se connecter</button>
+        </form>
+        <div class="auth-note" id="status" style="margin-top:12px">Les cinq comptes de test sont décrits dans le README V35.</div>
+      </div>
+    </section>
+  </main>
+  <script src="js/cloud.js"></script>
+  <script>
+    const form=document.getElementById('loginForm'),status=document.getElementById('status');
+    (async()=>{try{const r=await fetch('/api/auth/me',{credentials:'same-origin'});if(r.ok)location.replace('app.html');}catch(_){}})();
+    form.addEventListener('submit',async e=>{
+      e.preventDefault();status.textContent='Connexion…';
+      try{const user=await PerrasCloud.login(document.getElementById('username').value,document.getElementById('password').value);status.textContent=`Bienvenue ${user.name}.`;location.replace('app.html');}
+      catch(err){status.textContent=err.message;}
+    });
+    if(new URLSearchParams(location.search).get('expired')==='1')status.textContent='Votre session est expirée. Reconnectez-vous.';
+  </script>
+</body>
+</html>

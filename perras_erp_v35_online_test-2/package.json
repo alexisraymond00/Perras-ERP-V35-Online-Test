@@ -1,0 +1,13 @@
+{
+  "name": "perras-erp-v35-online-test",
+  "version": "35.0.0",
+  "private": true,
+  "description": "Perras ERP V35 Online Test - multiutilisateur + Allpriser REDBOOK.DAT",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "check": "node --check server/server.js && node --check server/online.js && node --check server/allpriser.js && node --check js/cloud.js && node --check js/data.js && node --check js/auth.js && node --check js/app.js"
+  },
+  "engines": {"node": ">=20"},
+  "dependencies": {"pg": "^8.13.0"}
+}
