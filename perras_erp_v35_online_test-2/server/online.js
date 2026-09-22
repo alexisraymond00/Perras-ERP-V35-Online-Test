@@ -121,7 +121,12 @@ function createOnlineService({serverDir}){
     if(mode==='postgres'){const r=await pool.query('SELECT key,value,version,updated_at,updated_by FROM perras_state WHERE updated_at>$1 ORDER BY updated_at',[d]);return r.rows.map(x=>({...x,updated_at:new Date(x.updated_at).toISOString()}));}
     return Object.entries(local.state).filter(([,x])=>new Date(x.updated_at)>d).map(([key,x])=>({key,...x}));
   }
-  function canWriteState(user,key){if(!user)return false;if(user.role==='admin')return true;const bureau=new Set(['clients','serviceCalls','tasks','heaters','truckStock','reports','quotes','fieldPOs','productRequests','forms','audit','nexus']);const tech=new Set(['serviceCalls','tasks','truckStock','fieldPOs','productRequests','forms','audit','nexus']);return (user.role==='bureau'?bureau:tech).has(String(key));}
+  async function getState(key){
+    key=String(key||'').trim();if(!key)return null;
+    if(mode==='postgres'){const r=await pool.query('SELECT value,version,updated_at,updated_by FROM perras_state WHERE key=$1',[key]);if(!r.rowCount)return null;return {...r.rows[0],updated_at:new Date(r.rows[0].updated_at).toISOString()};}
+    return local.state[key]||null;
+  }
+  function canWriteState(user,key){if(!user)return false;if(user.role==='admin')return true;const bureau=new Set(['clients','serviceCalls','tasks','heaters','truckStock','reports','quotes','fieldPOs','productRequests','forms','audit','nexus','stockTransfers']);const tech=new Set(['serviceCalls','tasks','truckStock','fieldPOs','productRequests','forms','audit','nexus','stockTransfers']);return (user.role==='bureau'?bureau:tech).has(String(key));}
   async function setState(key,value,user){key=String(key||'').trim();if(!key)throw new Error('Clé manquante');if(user?.id!=='system'&&!canWriteState(user,key))throw new Error('Permission refusée');if(mode==='postgres'){const r=await pool.query(`INSERT INTO perras_state(key,value,version,updated_at,updated_by) VALUES($1,$2::jsonb,1,NOW(),$3) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,version=perras_state.version+1,updated_at=NOW(),updated_by=EXCLUDED.updated_by RETURNING key,version,updated_at`,[key,JSON.stringify(value),user?.id||'system']);return {...r.rows[0],updated_at:new Date(r.rows[0].updated_at).toISOString()};}const prev=local.state[key]||{version:0};local.state[key]={value,version:Number(prev.version||0)+1,updated_at:new Date().toISOString(),updated_by:user?.id||'system'};writeLocal();return {key,version:local.state[key].version,updated_at:local.state[key].updated_at};}
 
   let productSaveTimer=null,pendingProducts=null;
@@ -129,10 +134,17 @@ function createOnlineService({serverDir}){
   function saveProducts(products){pendingProducts=products;clearTimeout(productSaveTimer);return new Promise(resolve=>{productSaveTimer=setTimeout(async()=>{const p=pendingProducts;pendingProducts=null;try{await saveProductsNow(p);}catch(e){console.error('Sauvegarde produits online:',e.message);}resolve();},350);});}
   async function loadProducts(){if(mode==='postgres'){const r=await pool.query('SELECT value FROM perras_products_snapshot WHERE id=1');return r.rows[0]?.value||null;}return local.products||null;}
 
-  async function saveBinary(name,buffer,metadata={}){if(mode==='postgres')await pool.query(`INSERT INTO perras_files(name,content,metadata,updated_at) VALUES($1,$2,$3::jsonb,NOW()) ON CONFLICT(name) DO UPDATE SET content=EXCLUDED.content,metadata=EXCLUDED.metadata,updated_at=NOW()`,[name,buffer,JSON.stringify(metadata)]);else{local.files[name]={metadata,updated_at:new Date().toISOString()};writeLocal();}}
-  async function loadBinary(name){if(mode!=='postgres')return null;const r=await pool.query('SELECT content,metadata,updated_at FROM perras_files WHERE name=$1',[name]);if(!r.rowCount)return null;return {content:r.rows[0].content,metadata:r.rows[0].metadata,updatedAt:new Date(r.rows[0].updated_at).toISOString()};}
+  async function saveBinary(name,buffer,metadata={}){
+    if(mode==='postgres')await pool.query(`INSERT INTO perras_files(name,content,metadata,updated_at) VALUES($1,$2,$3::jsonb,NOW()) ON CONFLICT(name) DO UPDATE SET content=EXCLUDED.content,metadata=EXCLUDED.metadata,updated_at=NOW()`,[name,buffer,JSON.stringify(metadata)]);
+    else{local.files[name]={content:Buffer.from(buffer).toString('base64'),metadata,updated_at:new Date().toISOString()};writeLocal();}
+  }
+  async function loadBinary(name){
+    if(mode==='postgres'){const r=await pool.query('SELECT content,metadata,updated_at FROM perras_files WHERE name=$1',[name]);if(!r.rowCount)return null;return {content:r.rows[0].content,metadata:r.rows[0].metadata,updatedAt:new Date(r.rows[0].updated_at).toISOString()};}
+    const row=local.files[name];if(!row||!row.content)return null;return {content:Buffer.from(row.content,'base64'),metadata:row.metadata||{},updatedAt:row.updated_at||null};
+  }
+  async function deleteBinary(name){if(mode==='postgres')await pool.query('DELETE FROM perras_files WHERE name=$1',[name]);else{delete local.files[name];writeLocal();}}
 
-  return {init,mode:()=>mode,authenticate,createSession,deleteSession,sessionUser,cookieFor,getStateAll,getStateChanges,setState,canWriteState,loadProducts,saveProducts,saveBinary,loadBinary,testUsers:()=>TEST_USERS.map(({password,...u})=>u)};
+  return {init,mode:()=>mode,authenticate,createSession,deleteSession,sessionUser,cookieFor,getStateAll,getStateChanges,getState,setState,canWriteState,loadProducts,saveProducts,saveBinary,loadBinary,deleteBinary,testUsers:()=>TEST_USERS.map(({password,...u})=>u)};
 }
 
 module.exports={createOnlineService};
