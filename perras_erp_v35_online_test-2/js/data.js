@@ -97,6 +97,7 @@
     quotes:[],
     fieldPOs:[],
     productRequests:[],
+    stockTransfers:[],
     forms:[],
     audit:[],
     nexus:[],
@@ -257,6 +258,19 @@
   function normalizeSearch(v=''){
     return String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   }
+  function smartProductTokens(v=''){
+    let s=normalizeSearch(v).replace(/[½]/g,' 1/2 ').replace(/[¼]/g,' 1/4 ').replace(/[¾]/g,' 3/4 ');
+  s=s.replace(/(\d),(\d)/g,'$1.$2').replace(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/g,' $1 $2 ');
+    s=s.replace(/(\d+)\s*[- ]\s*(\d+)\s*\/\s*(\d+)/g,(_,a,b,c)=>` dim${(Number(a)+Number(b)/Number(c)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
+    s=s.replace(/\b(\d+)\s*\/\s*(\d+)\b/g,(_,a,b)=>` dim${(Number(a)/Number(b)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
+    s=s.replace(/\bp\s*[- ]?\s*trap\b/g,' ptrap ').replace(/\bball\s+valve\b/g,' ballvalve ').replace(/\bcheck\s+valve\b/g,' checkvalve ').replace(/\bwater\s+heater\b/g,' waterheater ').replace(/\bsump\s+pump\b/g,' sumppump ');
+    s=s.replace(/\bchauffe\s*[- ]?eau\b/g,' waterheater ').replace(/\bpompe\s+(?:de\s+)?puisard\b/g,' sumppump ').replace(/\bvalve\s+a\s+bille\b/g,' ballvalve ').replace(/[^a-z0-9.]+/g,' ');
+    const syn={elbow:'coude',coude:'coude',tee:'tee',te:'tee',trap:'ptrap',siphon:'ptrap',ptrap:'ptrap',coupling:'coupling',manchon:'coupling',reducer:'reducer',reducteur:'reducer',reduction:'reducer',bushing:'bushing',ballvalve:'ballvalve',checkvalve:'checkvalve',clapet:'checkvalve',waterheater:'waterheater',sumppump:'sumppump',faucet:'robinet',robinet:'robinet',copper:'cuivre',cuivre:'cuivre'};
+    const stop=new Set(['in','inch','inches','po','pouce','pouces','deg','degree','degrees','degre','degres','the','a','de','du','des','et']),out=new Set();
+    for(const t0 of s.split(/\s+/).filter(Boolean)){if(stop.has(t0))continue;const t=syn[t0]||t0;out.add(t);if(/^\d+(?:\.\d+)?$/.test(t)){const n=Number(t);if(n!==45&&n!==90&&n>0&&n<=24)out.add('dim'+String(n));if(n===90){out.add('coude');out.add('coude90');}if(n===45){out.add('coude');out.add('coude45');}}}
+    return [...out];
+  }
+  function smartProductMatch(text,query){const q=smartProductTokens(query);if(!q.length)return true;const p=new Set(smartProductTokens(text));return q.every(t=>p.has(t));}
   function cacheProductStatsFromArray(products){
     products=Array.isArray(products)?products:[];
     let active=0,warehouseUnits=0,low=0,out=0,onOrder=0,lowIncludingOut=0,costValue=0,saleValue=0;
@@ -285,7 +299,7 @@
     const categorySale={};
     for(let i=0;i<products.length;i++){
       const p=products[i]; byId.set(p.id,p);
-      rows[i]={p,text:p._search||normalizeSearch([p.code,p.description,p.category,p.supplierCategoryId].join(' '))};
+      rows[i]={p,text:p._search||normalizeSearch([p.code,p.description,p.category,p.supplierCategoryId].join(' ')),smartText:[p.code,p.description,p.category,p.supplierCategoryId].join(' ')};
       if(p.active!==false){
         active++; const qty=Number(p.warehouseQty||0),min=Number(p.minQty||0),cost=Number(p.costPrice||0),list=Number(p.listPrice||0); warehouseUnits+=qty; onOrder+=Number(p.onOrderQty||0); costValue+=qty*cost; saleValue+=qty*list; categorySale[p.category||'Autre']=(categorySale[p.category||'Autre']||0)+qty*list;
         if(qty===0) out++; else if(qty<=min) low++;
@@ -316,7 +330,7 @@
       if(filter==='low' && !(p.active!==false&&qty>0&&qty<=min)) continue;
       if(filter==='out' && !(p.active!==false&&qty===0)) continue;
       if(filter==='onorder' && !(Number(p.onOrderQty||0)>0)) continue;
-      if(q && !row.text.includes(q)) continue;
+      if(q && !smartProductMatch(row.smartText||row.text,q)) continue;
       matches.push(p);
     }
     return {total:matches.length,items:matches.slice(offset,offset+limit),offset,limit};
@@ -330,5 +344,5 @@
   function exportAll(){ensure(); const out={version:20,exportedAt:new Date().toISOString(),data:{}};Object.keys(DEFAULTS).forEach(k=>out.data[k]=get(k));return out;}
   function importAll(payload){if(!payload||!payload.data) throw new Error('Sauvegarde invalide');Object.keys(DEFAULTS).forEach(k=>{if(k in payload.data)set(k,payload.data[k]);});migrateCore();localStorage.setItem('perras_core_schema_version',CORE_SCHEMA_VERSION);invalidateCache();audit('Restauration','Système','Sauvegarde importée');}
 
-  window.PerrasDB={DEFAULTS,ensure,get,set,applyRemote,reset,uid,audit,exportAll,importAll,todayISO,queryProducts,productById,productStats,productStatsCached,normalizeSearch,loadProductsAsync,productsReady,productsProgress};
+  window.PerrasDB={DEFAULTS,ensure,get,set,applyRemote,reset,uid,audit,exportAll,importAll,todayISO,queryProducts,productById,productStats,productStatsCached,normalizeSearch,smartProductTokens,smartProductMatch,loadProductsAsync,productsReady,productsProgress};
 })();
