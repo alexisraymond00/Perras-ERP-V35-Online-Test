@@ -2,49 +2,37 @@
   "users": [
     {
       "id": "u_admin",
-      "name": "Admin 1",
-      "username": "admin1",
-      "phone": "",
-      "role": "admin",
-      "active": true,
-      "title": "Administrateur"
-    },
-    {
-      "id": "u_admin2",
-      "name": "Admin 2",
-      "username": "admin2",
-      "phone": "",
+      "name": "Alexis Raymond",
+      "phone": "4505550101",
       "role": "admin",
       "active": true,
       "title": "Administrateur"
     },
     {
       "id": "u_bureau",
-      "name": "Bureau 1",
-      "username": "bureau1",
-      "phone": "",
+      "name": "Julie Bureau",
+      "phone": "4505550102",
       "role": "bureau",
       "active": true,
-      "title": "Bureau"
-    },
-    {
-      "id": "u_bureau2",
-      "name": "Bureau 2",
-      "username": "bureau2",
-      "phone": "",
-      "role": "bureau",
-      "active": true,
-      "title": "Bureau"
+      "title": "Coordonnatrice"
     },
     {
       "id": "u_tech1",
-      "name": "Tech 1",
-      "username": "tech1",
-      "phone": "",
+      "name": "Marc Gagnon",
+      "phone": "4505550103",
       "role": "tech",
       "active": true,
       "title": "Technicien",
       "truckId": "t101"
+    },
+    {
+      "id": "u_tech2",
+      "name": "David Roy",
+      "phone": "4505550104",
+      "role": "tech",
+      "active": true,
+      "title": "Technicien",
+      "truckId": "t102"
     }
   ],
   "trucks": [
@@ -59,7 +47,7 @@
       "id": "t102",
       "number": "102",
       "description": "Ram ProMaster - Service",
-      "assignedUserId": "",
+      "assignedUserId": "u_tech2",
       "active": true
     },
     {
@@ -108,7 +96,7 @@
       "btNumber": "",
       "poNumber": "PO-ABC-241",
       "clientId": "c1",
-      "date": "2026-09-18",
+      "date": "2026-09-23",
       "time": "08:00",
       "duration": 90,
       "address": "120 rue Principale, Farnham",
@@ -117,22 +105,14 @@
       "type": "BT",
       "techId": "u_tech1",
       "status": "Planifié",
-      "photos": 1,
-      "manualClientName": "",
-      "contactPhone": "",
-      "minimumCallId": "",
-      "extraMinutes": 0,
-      "work": "",
-      "parts": "",
-      "notes": "",
-      "signature": ""
+      "photos": 1
     },
     {
       "id": "bt-1002",
       "btNumber": "",
       "poNumber": "",
       "clientId": "c2",
-      "date": "2026-09-18",
+      "date": "2026-09-23",
       "time": "10:30",
       "duration": 60,
       "address": "48 rue des Érables, Cowansville",
@@ -141,21 +121,13 @@
       "type": "BT",
       "techId": "u_tech1",
       "status": "Planifié",
-      "photos": 1,
-      "manualClientName": "",
-      "contactPhone": "",
-      "minimumCallId": "",
-      "extraMinutes": 0,
-      "work": "",
-      "parts": "",
-      "notes": "",
-      "signature": ""
+      "photos": 1
     },
     {
       "id": "fac-10482",
       "poNumber": "PO-IMMO-77",
       "clientId": "c3",
-      "date": "2026-09-18",
+      "date": "2026-09-23",
       "time": "09:00",
       "duration": 120,
       "address": "775 boul. Industriel, Granby",
@@ -163,17 +135,9 @@
       "description": "Drain lent au local 204",
       "type": "Facture",
       "invoiceNumber": "",
-      "techId": "u_tech1",
+      "techId": "u_tech2",
       "status": "Planifié",
-      "photos": 1,
-      "manualClientName": "",
-      "contactPhone": "",
-      "minimumCallId": "",
-      "extraMinutes": 0,
-      "work": "",
-      "parts": "",
-      "notes": "",
-      "signature": ""
+      "photos": 1
     }
   ],
   "minimumCalls": [
@@ -198,7 +162,7 @@
       "userId": "u_admin",
       "clientId": "c1",
       "title": "Valider la soumission plomberie",
-      "due": "2026-09-18",
+      "due": "2026-09-23",
       "priority": "Normale",
       "status": "À faire",
       "note": ""
@@ -208,7 +172,7 @@
       "userId": "u_bureau",
       "clientId": "c2",
       "title": "Rappeler pour le chauffe-eau",
-      "due": "2026-09-18",
+      "due": "2026-09-23",
       "priority": "Haute",
       "status": "À faire",
       "note": "Proposer une plage de remplacement."
@@ -221,7 +185,7 @@
       "brand": "Giant",
       "model": "152ETE",
       "serial": "GNT-298445",
-      "installDate": "2017-03-18",
+      "installDate": "2017-03-23",
       "capacity": "60 gal",
       "type": "Électrique"
     }
@@ -393,7 +357,7 @@
       "id": "po1",
       "number": "26-0001",
       "buyerId": "u_admin",
-      "date": "2026-09-18",
+      "date": "2026-09-23",
       "supplierId": "s1",
       "supplier": "Deschênes",
       "status": "Commandé",
@@ -404,8 +368,7 @@
           "productId": "p2",
           "qty": 60,
           "receivedQty": 0,
-          "unitCost": 2.2,
-          "backorderResolvedQty": 0
+          "unitCost": 2.2
         }
       ]
     },
@@ -413,7 +376,7 @@
       "id": "po2",
       "number": "26-0002",
       "buyerId": "u_admin",
-      "date": "2026-09-18",
+      "date": "2026-09-23",
       "supplierId": "s2",
       "supplier": "Wolseley",
       "status": "À envoyer",
@@ -424,8 +387,7 @@
           "productId": "p3",
           "qty": 24,
           "receivedQty": 0,
-          "unitCost": 13.4,
-          "backorderResolvedQty": 0
+          "unitCost": 13.4
         }
       ]
     }

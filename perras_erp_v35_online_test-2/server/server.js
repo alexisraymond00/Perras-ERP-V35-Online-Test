@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const {createOnlineService} = require('./online');
 
 // Petit chargeur .env sans dépendance externe.
 const ENV_FILE = path.join(__dirname,'.env');
@@ -17,6 +18,7 @@ if(fs.existsSync(ENV_FILE)){
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOT = path.resolve(__dirname, '..');
+const online = createOnlineService({serverDir:__dirname});
 const otpStore = new Map();
 const oauthStateStore = new Map();
 const REVIEW_STORE = path.join(__dirname,'google_reviews.json');
@@ -95,7 +97,7 @@ function loadProductStore(){
   try{const raw=JSON.parse(fs.readFileSync(PRODUCTS_STORE,'utf8'));productStore=Array.isArray(raw)?raw.map(x=>normalizeProduct(x,x)):[];}catch(_){productStore=[];}
   rebuildProductIndexes();
 }
-function saveProductStore(){const tmp=PRODUCTS_STORE+'.tmp';fs.writeFileSync(tmp,JSON.stringify(productStore),'utf8');fs.renameSync(tmp,PRODUCTS_STORE);rebuildProductIndexes();}
+function saveProductStore(){const tmp=PRODUCTS_STORE+'.tmp';fs.writeFileSync(tmp,JSON.stringify(productStore),'utf8');fs.renameSync(tmp,PRODUCTS_STORE);rebuildProductIndexes();online.saveProducts(productStore).catch(e=>console.error('Sauvegarde produits online:',e.message));}
 function productQuery(params){
   const q=normText(params.get('q')||params.get('query')||''),filter=params.get('filter')||'all';
   const offset=Math.max(0,Number(params.get('offset')||0)),limit=Math.max(1,Math.min(500,Number(params.get('limit')||48)));
@@ -297,17 +299,30 @@ function staticFile(req,res){
 
 const server=http.createServer(async (req,res)=>{
   const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-  if(req.method==='GET' && url.pathname==='/api/health') return json(res,200,{ok:true,sms:!!(process.env.TWILIO_ACCOUNT_SID&&process.env.TWILIO_AUTH_TOKEN&&process.env.TWILIO_FROM_NUMBER),nexus:nexusConfigured(),googleOAuthReady:googleOAuthReady(),googleConnected:googleConnected(),googleReviews:googleConfigured(),googleLastSync:readReviewStore().lastSync});
+  if(req.method==='GET' && url.pathname==='/api/health') return json(res,200,{ok:true,online:true,storage:online.mode(),nexus:nexusConfigured(),googleOAuthReady:googleOAuthReady(),googleConnected:googleConnected(),googleReviews:googleConfigured(),googleLastSync:readReviewStore().lastSync});
 
-  if(req.method==='POST' && url.pathname==='/api/auth/request'){
-    try{const {phone}=await parseBody(req);const p=normalizePhone(phone);if(p.length!==10)return json(res,400,{error:'Numéro invalide'});const code=randomCode();otpStore.set(p,{code,expires:Date.now()+10*60*1000,attempts:0});const result=await sendTwilioSms(p,code);return json(res,200,{ok:true,devCode:result.dev?code:undefined});}
-    catch(e){ return json(res,500,{error:'Impossible d’envoyer le SMS',details:String(e.message||e)}); }
+  // Connexion centrale V38 — identifiant + mot de passe, session serveur 6 mois.
+  if(req.method==='POST' && url.pathname==='/api/auth/login'){
+    try{const body=await parseBody(req),user=await online.authenticate(body.username,body.password);if(!user)return json(res,401,{ok:false,error:'Identifiant ou mot de passe invalide.'});const sess=await online.createSession(user);res.setHeader('Set-Cookie',online.cookieFor(sess.token));return json(res,200,{ok:true,user,expiresAt:sess.expiresAt});}
+    catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
-  if(req.method==='POST' && url.pathname==='/api/auth/verify'){
-    try{const {phone,code}=await parseBody(req);const p=normalizePhone(phone),row=otpStore.get(p);if(!row)return json(res,400,{error:'Aucun code en attente'});if(Date.now()>row.expires){otpStore.delete(p);return json(res,400,{error:'Code expiré'});}row.attempts++;if(row.attempts>6){otpStore.delete(p);return json(res,429,{error:'Trop de tentatives'});}if(String(code)!==row.code)return json(res,400,{error:'Code invalide'});otpStore.delete(p);return json(res,200,{ok:true});}
-    catch(e){ return json(res,400,{error:'Requête invalide'}); }
-  }
+  if(req.method==='POST' && url.pathname==='/api/auth/logout'){await online.deleteSession(req);res.setHeader('Set-Cookie',online.cookieFor('',true));return json(res,200,{ok:true});}
+  if(req.method==='GET' && url.pathname==='/api/auth/me'){const user=await online.sessionUser(req);return user?json(res,200,{ok:true,user}):json(res,401,{ok:false,error:'Session expirée'});}
 
+  const isPublicWebhook=url.pathname==='/api/google-reviews/pubsub';
+  const onlineUser=await online.sessionUser(req);
+  if(url.pathname.startsWith('/api/') && !isPublicWebhook && !onlineUser) return json(res,401,{ok:false,error:'Connexion requise'});
+
+  if(req.method==='GET' && url.pathname==='/api/cloud/bootstrap'){
+    const rows=await online.getStateAll(),now=new Date().toISOString();return json(res,200,{ok:true,user:onlineUser,rows,serverTime:now,storage:online.mode()});
+  }
+  if(req.method==='GET' && url.pathname==='/api/cloud/changes'){
+    const rows=await online.getStateChanges(url.searchParams.get('since')||'1970-01-01T00:00:00.000Z');return json(res,200,{ok:true,rows,serverTime:new Date().toISOString()});
+  }
+  if(req.method==='POST' && url.pathname==='/api/cloud/state'){
+    try{const body=await parseBody(req);const meta=await online.setState(body.key,body.value,onlineUser);return json(res,200,{ok:true,...meta});}
+    catch(e){return json(res,403,{ok:false,error:String(e.message||e)});}
+  }
 
   /* ===================== Catalogue produits persistant ===================== */
   if(req.method==='GET' && url.pathname==='/api/products/stats') return json(res,200,{ok:true,stats:productStatsCache});
@@ -440,7 +455,7 @@ const server=http.createServer(async (req,res)=>{
   }
 
   if(req.method==='POST' && url.pathname==='/api/nexus'){
-    try{const body=await parseBody(req);const result=await askNexusAI(body);return json(res,200,{ok:true,...result});}
+    try{const body=await parseBody(req);body.role=onlineUser.role;body.name=onlineUser.name;const result=await askNexusAI(body);return json(res,200,{ok:true,...result});}
     catch(e){return json(res,503,{ok:false,error:String(e.message||e),configured:nexusConfigured()});}
   }
 
@@ -488,15 +503,22 @@ const server=http.createServer(async (req,res)=>{
   staticFile(req,res);
 });
 
-server.listen(PORT,()=>{
-  console.log(`Perras ERP: http://localhost:${PORT}`);
-  console.log(`Catalogue produits serveur: ${productStore.length} produit(s).`);
-  console.log(process.env.TWILIO_ACCOUNT_SID?'SMS Twilio activé.':'Mode développement: le code SMS sera affiché à l’écran.');
-  console.log(nexusConfigured()?'Nexus AI connecté à OpenAI.':'Nexus AI: ajoutez OPENAI_API_KEY dans server/.env.');
-  console.log(googleConfigured()?'Avis Google Business Profile activés.':googleConnected()?'Google connecté; associez les fiches dans Rapports > Avis Google.':'Avis Google: cliquez Connecter Google après avoir configuré les identifiants OAuth.');
-});
+async function startV38Online(){
+  await online.init();
+  const cloudProducts=await online.loadProducts();
+  if(Array.isArray(cloudProducts)&&cloudProducts.length){productStore=cloudProducts.map(x=>normalizeProduct(x,x));rebuildProductIndexes();}
+  else await online.saveProducts(productStore);
 
-if(googleConfigured()){
-  setTimeout(()=>syncGoogleReviews().catch(e=>console.error('Sync Google initiale:',e.message)),2500);
-  setInterval(()=>syncGoogleReviews().catch(e=>console.error('Sync Google périodique:',e.message)),15*60*1000).unref();
+  server.listen(PORT,'0.0.0.0',()=>{
+    console.log(`Perras ERP V38 Online: http://localhost:${PORT}`);
+    console.log(`Stockage central: ${online.mode()}.`);
+    console.log(`Catalogue produits serveur: ${productStore.length} produit(s).`);
+    console.log(nexusConfigured()?'Nexus AI connecté à OpenAI.':'Nexus AI: ajoutez OPENAI_API_KEY dans les variables d’environnement.');
+    console.log(googleConfigured()?'Avis Google Business Profile activés.':googleConnected()?'Google connecté; associez les fiches dans Rapports > Avis Google.':'Avis Google: configurez les identifiants OAuth pour l’activer.');
+  });
+  if(googleConfigured()){
+    setTimeout(()=>syncGoogleReviews().catch(e=>console.error('Sync Google initiale:',e.message)),2500);
+    setInterval(()=>syncGoogleReviews().catch(e=>console.error('Sync Google périodique:',e.message)),15*60*1000).unref();
+  }
 }
+startV38Online().catch(e=>{console.error('Démarrage V38 Online impossible:',e);process.exit(1);});
