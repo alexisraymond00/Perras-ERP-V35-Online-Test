@@ -41,7 +41,7 @@ function smartProductTokens(v=''){
   s=s.replace(/(\d+)\s*[- ]\s*(\d+)\s*\/\s*(\d+)/g,(_,a,b,c)=>` dim${(Number(a)+Number(b)/Number(c)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
   s=s.replace(/\b(\d+)\s*\/\s*(\d+)\b/g,(_,a,b)=>` dim${(Number(a)/Number(b)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
   s=s.replace(/\bp\s*[- ]?\s*trap\b/g,' ptrap ').replace(/\bball\s+valve\b/g,' ballvalve ').replace(/\bcheck\s+valve\b/g,' checkvalve ').replace(/\bwater\s+heater\b/g,' waterheater ').replace(/\bsump\s+pump\b/g,' sumppump ').replace(/\bchauffe\s*[- ]?eau\b/g,' waterheater ').replace(/\bpompe\s+(?:de\s+)?puisard\b/g,' sumppump ').replace(/\bvalve\s+a\s+bille\b/g,' ballvalve ').replace(/\bpressure\s+(?:reducing\s+)?valve\b/g,' prv ').replace(/\bpressure\s+regulator\b/g,' prv ').replace(/\bwater\s+closet\b/g,' toilette ').replace(/\bclapet\s+(?:de\s+)?non\s*[- ]?retour\b/g,' checkvalve ').replace(/[^a-z0-9.]+/g,' ');
-  const syn={elbow:'coude',coude:'coude',ell:'coude',ells:'coude',tee:'tee',te:'tee',trap:'ptrap',siphon:'ptrap',ptrap:'ptrap',coupling:'coupling',couplage:'coupling',manchon:'coupling',reducer:'reducer',reducteur:'reducer',reduction:'reducer',bushing:'bushing',bague:'bushing',ballvalve:'ballvalve',checkvalve:'checkvalve',clapet:'checkvalve',waterheater:'waterheater',sumppump:'sumppump',faucet:'robinet',robinet:'robinet',copper:'cuivre',cuivre:'cuivre',pipe:'tuyau',tuyau:'tuyau',adapter:'adaptateur',adaptor:'adaptateur',adaptateur:'adaptateur',union:'union',nipple:'mamelon',mamelon:'mamelon',wh:'waterheater',bv:'ballvalve',cv:'checkvalve',prv:'prv',lav:'lavabo',lavatory:'lavabo',lavabo:'lavabo',wc:'toilette',toilet:'toilette',toilette:'toilette',dwv:'dwv',abs:'abs',pvc:'pvc',pex:'pex',pexalpex:'pexalpex',cpvc:'cpvc'};
+  const syn={elbow:'coude',coude:'coude',ell:'coude',ells:'coude',tee:'tee',te:'tee',trap:'ptrap',siphon:'ptrap',ptrap:'ptrap',coupling:'coupling',couplage:'coupling',manchon:'coupling',reducer:'reducer',reducteur:'reducer',reduction:'reducer',bushing:'bushing',bague:'bushing',ballvalve:'ballvalve',checkvalve:'checkvalve',clapet:'checkvalve',waterheater:'waterheater',sumppump:'sumppump',faucet:'robinet',robinet:'robinet',copper:'cuivre',cuivre:'cuivre',pipe:'tuyau',tuyau:'tuyau',adapter:'adaptateur',adaptor:'adaptateur',adaptateur:'adaptateur',union:'union',nipple:'mamelon',mamelon:'mamelon',wh:'waterheater',bv:'ballvalve',cv:'checkvalve',prv:'prv',lav:'lavabo',lavatory:'lavabo',lavabo:'lavabo',wc:'toilette',toilet:'toilette',toilette:'toilette',dwv:'dwv',abs:'abs',pvc:'pvc',pex:'pex',pexalpex:'pexalpex',cpvc:'cpvc',fip:'fip',mip:'mip',npt:'npt',hub:'hub',nohub:'nohub',cleanout:'cleanout',co:'cleanout',closet:'toilette'};
   const stop=new Set(['in','inch','inches','po','pouce','pouces','deg','degree','degrees','degre','degres','the','a','de','du','des','et','avec','pour','of']);const out=[];
   for(const t0 of s.split(/\s+/).filter(Boolean)){if(stop.has(t0))continue;let t=syn[t0]||t0;if(/^\d+(?:\.\d+)?$/.test(t)){const n=Number(t);if(n===90||n===45){out.push(`angle${n}`,'coude');continue;}if(n>0&&n<=24){out.push('dim'+String(n));continue;}}out.push(t);}return [...new Set(out)];
 }
@@ -336,6 +336,43 @@ const server=http.createServer(async (req,res)=>{
   if(req.method==='POST' && url.pathname==='/api/cloud/state'){
     try{const body=await parseBody(req);const meta=await online.setState(body.key,body.value,onlineUser);return json(res,200,{ok:true,...meta});}
     catch(e){return json(res,403,{ok:false,error:String(e.message||e)});}
+  }
+
+  /* ===================== Numérotation PO centrale ===================== */
+  if(req.method==='POST' && url.pathname==='/api/po-number/reserve'){
+    try{const body=await parseBody(req),number=await online.reservePoNumber(body.prefix,onlineUser,body.source||'po');return json(res,200,{ok:true,number});}
+    catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/po-number/commit'){
+    try{const body=await parseBody(req),number=await online.commitPoNumber(body.number,onlineUser,body.documentId||'',body.source||'po');return json(res,200,{ok:true,number});}
+    catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/po-number/release'){
+    try{const body=await parseBody(req);await online.releasePoNumber(body.number);return json(res,200,{ok:true});}
+    catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+
+  /* ===================== Transfert inventaire Shop <-> camion ===================== */
+  if(req.method==='POST' && url.pathname==='/api/inventory/transfer'){
+    try{
+      const body=await parseBody(req),productId=String(body.productId||''),direction=String(body.direction||''),qty=num(body.qty,0);
+      if(!productId||!['shop-to-truck','truck-to-shop'].includes(direction)||!(qty>0))return json(res,400,{ok:false,error:'Transfert invalide'});
+      const truckId=onlineUser.role==='tech'?String(onlineUser.truckId||''):String(body.truckId||'');
+      if(!truckId)return json(res,400,{ok:false,error:'Aucun camion assigné'});
+      const p=productByIdMap.get(productId);if(!p)return json(res,404,{ok:false,error:'Produit introuvable'});
+      const rows=await online.getStateAll(),stateRow=rows.find(x=>x.key==='truckStock'),stock=Array.isArray(stateRow?.value)?JSON.parse(JSON.stringify(stateRow.value)):[];
+      let tr=stock.find(x=>String(x.truckId)===truckId&&String(x.productId)===productId);if(!tr){tr={truckId,productId,qty:0};stock.push(tr);}
+      if(direction==='shop-to-truck'){
+        if(num(p.warehouseQty)<qty)return json(res,409,{ok:false,error:`Stock Shop insuffisant (${num(p.warehouseQty)} disponible)`});
+        p.warehouseQty=num(p.warehouseQty)-qty;tr.qty=num(tr.qty)+qty;
+      }else{
+        if(num(tr.qty)<qty)return json(res,409,{ok:false,error:`Stock camion insuffisant (${num(tr.qty)} disponible)`});
+        tr.qty=num(tr.qty)-qty;p.warehouseQty=num(p.warehouseQty)+qty;
+      }
+      const idx=productStore.findIndex(x=>x.id===p.id);productStore[idx]=normalizeProduct(p,p);saveProductStore();
+      const clean=stock.filter(x=>num(x.qty)>0);await online.setState('truckStock',clean,onlineUser);
+      return json(res,200,{ok:true,product:productByIdMap.get(productId),truckQty:num(tr.qty),truckStock:clean,stats:productStatsCache});
+    }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
 
   /* ===================== Catalogue produits persistant ===================== */

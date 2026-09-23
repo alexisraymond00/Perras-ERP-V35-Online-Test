@@ -7,7 +7,7 @@ function createOnlineService({serverDir}){
   const seedFile=path.join(serverDir,'seed_state.json');
   let mode='local';
   let pool=null;
-  let local={state:{},users:{},sessions:{},products:null,files:{}};
+  let local={state:{},users:{},sessions:{},products:null,files:{},poNumbers:{}};
   let initialized=false;
 
   function passwordEnv(name,fallback){
@@ -25,7 +25,7 @@ function createOnlineService({serverDir}){
     {id:'u_tech1',username:'tech1',name:'Tech 1',role:'tech',password:passwordEnv('PERRAS_TECH1_PASSWORD','Perras!Tech01')}
   ];
 
-  function readLocal(){try{local=JSON.parse(fs.readFileSync(localFile,'utf8'));}catch(_){local={state:{},users:{},sessions:{},products:null,files:{}};}local.state||={};local.users||={};local.sessions||={};local.files||={};}
+  function readLocal(){try{local=JSON.parse(fs.readFileSync(localFile,'utf8'));}catch(_){local={state:{},users:{},sessions:{},products:null,files:{},poNumbers:{}};}local.state||={};local.users||={};local.sessions||={};local.files||={};local.poNumbers||={};}
   function writeLocal(){const tmp=localFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify(local,null,2),'utf8');fs.renameSync(tmp,localFile);}
   function pbkdf2(password,salt){return crypto.pbkdf2Sync(String(password),salt,120000,32,'sha256').toString('hex');}
   function hashToken(token){return crypto.createHash('sha256').update(String(token)).digest('hex');}
@@ -58,6 +58,10 @@ function createOnlineService({serverDir}){
       CREATE TABLE IF NOT EXISTS perras_files(
         name TEXT PRIMARY KEY, content BYTEA NOT NULL, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS perras_po_numbers(
+        number TEXT PRIMARY KEY, owner_id TEXT, source TEXT NOT NULL DEFAULT 'po', status TEXT NOT NULL DEFAULT 'reserved',
+        document_id TEXT, reserved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
     mode='postgres';
@@ -139,10 +143,59 @@ function createOnlineService({serverDir}){
   function saveProducts(products){pendingProducts=products;clearTimeout(productSaveTimer);return new Promise(resolve=>{productSaveTimer=setTimeout(async()=>{const p=pendingProducts;pendingProducts=null;try{await saveProductsNow(p);}catch(e){console.error('Sauvegarde produits online:',e.message);}resolve();},350);});}
   async function loadProducts(){if(mode==='postgres'){const r=await pool.query('SELECT value FROM perras_products_snapshot WHERE id=1');return r.rows[0]?.value||null;}return local.products||null;}
 
+  function poNumbersFromStateRows(rows,prefix){
+    const used=new Set();
+    const re=new RegExp('^'+String(prefix).replace(/[^0-9]/g,'')+'-(\\d{4})$');
+    for(const row of rows||[]){
+      if(!['purchaseOrders','fieldPOs'].includes(String(row.key||'')))continue;
+      const arr=Array.isArray(row.value)?row.value:[];
+      for(const x of arr){const m=String(x?.number||'').match(re);if(m)used.add(Number(m[1]));}
+    }
+    return used;
+  }
+  async function reservePoNumber(prefix,user,source='po'){
+    prefix=String(prefix||String(new Date().getFullYear()).slice(-2)).replace(/\D/g,'').slice(-2);
+    if(!/^\d{2}$/.test(prefix))throw new Error('Préfixe PO invalide');
+    const owner=String(user?.id||'system'),src=String(source||'po');
+    if(mode==='postgres'){
+      const c=await pool.connect();
+      try{
+        await c.query('BEGIN');
+        await c.query('SELECT pg_advisory_xact_lock($1)',[9283501]);
+        const existing=await c.query("SELECT number FROM perras_po_numbers WHERE owner_id=$1 AND source=$2 AND status='reserved' ORDER BY reserved_at LIMIT 1",[owner,src]);
+        if(existing.rowCount){await c.query('COMMIT');return existing.rows[0].number;}
+        const sr=await c.query("SELECT key,value FROM perras_state WHERE key IN ('purchaseOrders','fieldPOs')");
+        const used=poNumbersFromStateRows(sr.rows,prefix);
+        const rr=await c.query("SELECT number FROM perras_po_numbers WHERE number LIKE $1 AND status IN ('reserved','committed')",[prefix+'-%']);
+        for(const x of rr.rows){const m=String(x.number||'').match(/-(\d{4})$/);if(m)used.add(Number(m[1]));}
+        let n=1;while(used.has(n))n++;
+        const number=`${prefix}-${String(n).padStart(4,'0')}`;
+        await c.query("INSERT INTO perras_po_numbers(number,owner_id,source,status,reserved_at,updated_at) VALUES($1,$2,$3,'reserved',NOW(),NOW()) ON CONFLICT(number) DO NOTHING",[number,owner,src]);
+        await c.query('COMMIT');return number;
+      }catch(e){try{await c.query('ROLLBACK');}catch(_){ }throw e;}finally{c.release();}
+    }
+    const existing=Object.values(local.poNumbers||{}).find(x=>x.owner_id===owner&&x.source===src&&x.status==='reserved');
+    if(existing)return existing.number;
+    const rows=Object.entries(local.state||{}).map(([key,x])=>({key,value:x?.value})),used=poNumbersFromStateRows(rows,prefix);
+    Object.values(local.poNumbers||{}).filter(x=>['reserved','committed'].includes(x.status)&&String(x.number||'').startsWith(prefix+'-')).forEach(x=>{const m=String(x.number).match(/-(\d{4})$/);if(m)used.add(Number(m[1]));});
+    let n=1;while(used.has(n))n++;const number=`${prefix}-${String(n).padStart(4,'0')}`;
+    local.poNumbers[number]={number,owner_id:owner,source:src,status:'reserved',reserved_at:new Date().toISOString()};writeLocal();return number;
+  }
+  async function commitPoNumber(number,user,documentId='',source='po'){
+    number=String(number||'').trim();if(!/^\d{2}-\d{4}$/.test(number))throw new Error('Numéro PO invalide');
+    if(mode==='postgres')await pool.query("INSERT INTO perras_po_numbers(number,owner_id,source,status,document_id,reserved_at,updated_at) VALUES($1,$2,$3,'committed',$4,NOW(),NOW()) ON CONFLICT(number) DO UPDATE SET status='committed',document_id=EXCLUDED.document_id,owner_id=EXCLUDED.owner_id,source=EXCLUDED.source,updated_at=NOW()",[number,String(user?.id||'system'),String(source||'po'),String(documentId||'')]);
+    else{local.poNumbers[number]={number,owner_id:String(user?.id||'system'),source:String(source||'po'),status:'committed',document_id:String(documentId||''),updated_at:new Date().toISOString()};writeLocal();}
+    return number;
+  }
+  async function releasePoNumber(number){
+    number=String(number||'').trim();if(!number)return;
+    if(mode==='postgres')await pool.query('DELETE FROM perras_po_numbers WHERE number=$1',[number]);else{delete local.poNumbers[number];writeLocal();}
+  }
+
   async function saveBinary(name,buffer,metadata={}){if(mode==='postgres')await pool.query(`INSERT INTO perras_files(name,content,metadata,updated_at) VALUES($1,$2,$3::jsonb,NOW()) ON CONFLICT(name) DO UPDATE SET content=EXCLUDED.content,metadata=EXCLUDED.metadata,updated_at=NOW()`,[name,buffer,JSON.stringify(metadata)]);else{local.files[name]={metadata,updated_at:new Date().toISOString()};writeLocal();}}
   async function loadBinary(name){if(mode!=='postgres')return null;const r=await pool.query('SELECT content,metadata,updated_at FROM perras_files WHERE name=$1',[name]);if(!r.rowCount)return null;return {content:r.rows[0].content,metadata:r.rows[0].metadata,updatedAt:new Date(r.rows[0].updated_at).toISOString()};}
 
-  return {init,mode:()=>mode,authenticate,createSession,deleteSession,sessionUser,cookieFor,getStateAll,getStateChanges,setState,canWriteState,loadProducts,saveProducts,saveBinary,loadBinary,testUsers:()=>TEST_USERS.map(({password,...u})=>u)};
+  return {init,mode:()=>mode,authenticate,createSession,deleteSession,sessionUser,cookieFor,getStateAll,getStateChanges,setState,canWriteState,loadProducts,saveProducts,reservePoNumber,commitPoNumber,releasePoNumber,saveBinary,loadBinary,testUsers:()=>TEST_USERS.map(({password,...u})=>u)};
 }
 
 module.exports={createOnlineService};
