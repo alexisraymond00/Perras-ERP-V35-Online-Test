@@ -202,9 +202,10 @@ function loadProductStore(){
 function saveProductStore(){const tmp=PRODUCTS_STORE+'.tmp';fs.writeFileSync(tmp,JSON.stringify(productStore),'utf8');fs.renameSync(tmp,PRODUCTS_STORE);rebuildProductIndexes();online.saveProducts(productStore).catch(e=>console.error('Sauvegarde produits online:',e.message));}
 function productQuery(params){
   const rawQ=String(params.get('q')||params.get('query')||'').trim(),filter=params.get('filter')||'all',photoFilter=params.get('photoFilter')||'';
+  const supplierCategoryId=String(params.get('supplierCategoryId')||'').trim();
   const offset=Math.max(0,Number(params.get('offset')||0)),limit=Math.max(1,Math.min(500,Number(params.get('limit')||48)));
   const activeOnly=params.get('activeOnly')==='1';let rows=[];
-  for(const p of productStore){if(activeOnly&&p.active===false)continue;const qty=num(p.warehouseQty),min=num(p.minQty);
+  for(const p of productStore){if(activeOnly&&p.active===false)continue;if(supplierCategoryId&&String(p.supplierCategoryId||'')!==supplierCategoryId)continue;const qty=num(p.warehouseQty),min=num(p.minQty);
     if(filter==='low'&&!(p.active!==false&&qty>0&&qty<=min))continue;if(filter==='out'&&!(p.active!==false&&qty===0))continue;if(filter==='onorder'&&!(num(p.onOrderQty)>0))continue;
     const hasPhoto=Boolean(p.image||(Array.isArray(p.images)&&p.images.length));if(photoFilter==='missing'&&hasPhoto)continue;if(photoFilter==='found'&&(!hasPhoto||p.photoStatus==='review'))continue;if(photoFilter==='review'&&p.photoStatus!=='review')continue;
     let score=1;if(rawQ){score=smartSearchScore(p,rawQ);if(score<0)continue;}rows.push({p,score});
@@ -212,6 +213,15 @@ function productQuery(params){
   if(rawQ)rows.sort((a,b)=>b.score-a.score||String(a.p.description||'').localeCompare(String(b.p.description||''),'fr'));
   const items=rows.slice(offset,offset+limit).map(x=>x.p);
   return {total:rows.length,offset,limit,items,stats:productStatsCache};
+}
+function productCategoryCounts(activeOnly=true){
+  const byId={};let total=0,unclassified=0;
+  for(const p of productStore){
+    if(activeOnly&&p.active===false)continue;
+    total++;const id=String(p.supplierCategoryId||'');
+    if(!id)unclassified++;else byId[id]=(byId[id]||0)+1;
+  }
+  return {total,byId,unclassified};
 }
 
 loadProductStore();
@@ -435,6 +445,7 @@ const server=http.createServer(async (req,res)=>{
 
   /* ===================== Catalogue produits persistant ===================== */
   if(req.method==='GET' && url.pathname==='/api/products/stats') return json(res,200,{ok:true,stats:productStatsCache});
+  if(req.method==='GET' && url.pathname==='/api/products/category-counts') return json(res,200,{ok:true,...productCategoryCounts(url.searchParams.get('activeOnly')!=='0')});
   if(req.method==='GET' && url.pathname==='/api/products') return json(res,200,{ok:true,...productQuery(url.searchParams)});
   if(req.method==='POST' && url.pathname==='/api/products/lookup'){
     try{const body=await parseBody(req),ids=Array.isArray(body.ids)?body.ids.slice(0,1000):[];return json(res,200,{ok:true,items:ids.map(id=>productByIdMap.get(String(id))).filter(Boolean)});}catch(e){return json(res,400,{ok:false,error:'Recherche produits invalide'});}
