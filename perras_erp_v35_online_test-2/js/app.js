@@ -1980,9 +1980,7 @@
     if(a.dataset.action==='tool-take'){moveToolV16(a.dataset.id,true);return;}
     if(a.dataset.action==='tool-return'){moveToolV16(a.dataset.id,false);return;}
   });
-  content.addEventListener('click',e=>{
-    const a=e.target.closest('[data-action="new-order"]');if(!a)return;e.preventDefault();e.stopImmediatePropagation();showSupplierOrderModalV16('',[]);
-  },true);
+  // V38: l'ancien formulaire PO V16 est désactivé. Le formulaire V35 est l'unique écran de création/modification des bons de commande.
 
 
   /* ===== V17 — numéros uniquement à Terminer, suspension clients et outils Entrepôt/Camions ===== */
