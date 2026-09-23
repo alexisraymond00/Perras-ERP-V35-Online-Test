@@ -91,7 +91,7 @@
     permissions:{
       admin:{dashboard:true,tasks:true,calendar:true,calls:true,clients:true,bt:true,invoices:true,punches:true,timesheets:true,minimumcalls:true,forms:true,quotes:true,crm:true,inventory:true,products:true,orders:true,suppliers:true,pricing:true,technicians:true,trucks:true,tools:true,personnel:true,roles:true,nexus:true,tax:true,reports:true,settings:true},
       bureau:{dashboard:true,tasks:true,calendar:true,calls:true,clients:true,bt:true,invoices:true,punches:true,timesheets:true,forms:true,quotes:true,crm:true,inventory:true,products:true,tools:true,nexus:true,tax:true},
-      tech:{dashboard:true,calendar:true,interventions:true,clients:true,bt:true,timesheets:true,forms:true,quotes:true,inventory:true,products:true,mytruck:true,tools:true,requestproduct:true,fieldpos:true,nexus:true,tax:true}
+      tech:{dashboard:true,calendar:true,interventions:true,clients:true,bt:true,invoices:true,timesheets:true,forms:true,quotes:true,inventory:true,products:true,mytruck:true,tools:true,requestproduct:true,fieldpos:true,nexus:true,tax:true}
     },
     reports:[],
     quotes:[],
@@ -257,6 +257,80 @@
   function normalizeSearch(v=''){
     return String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   }
+  function smartProductTokens(v=''){
+    let s=normalizeSearch(v)
+      .replace(/[½]/g,' 1/2 ').replace(/[¼]/g,' 1/4 ').replace(/[¾]/g,' 3/4 ')
+      .replace(/\b1\s*½\b/g,' 1-1/2 ').replace(/\b2\s*½\b/g,' 2-1/2 ');
+    s=s.replace(/(\d),(\d)/g,'$1.$2').replace(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/g,' $1 $2 ');
+    s=s.replace(/(\d+)\s*[- ]\s*(\d+)\s*\/\s*(\d+)/g,(_,a,b,c)=>` dim${(Number(a)+Number(b)/Number(c)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
+    s=s.replace(/\b(\d+)\s*\/\s*(\d+)\b/g,(_,a,b)=>` dim${(Number(a)/Number(b)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
+    s=s.replace(/\bp\s*[- ]?\s*trap\b/g,' ptrap ')
+      .replace(/\bball\s+valve\b/g,' ballvalve ')
+      .replace(/\bcheck\s+valve\b/g,' checkvalve ')
+      .replace(/\bwater\s+heater\b/g,' waterheater ')
+      .replace(/\bsump\s+pump\b/g,' sumppump ')
+      .replace(/\bchauffe\s*[- ]?eau\b/g,' waterheater ')
+      .replace(/\bpompe\s+(?:de\s+)?puisard\b/g,' sumppump ')
+      .replace(/\bvalve\s+a\s+bille\b/g,' ballvalve ')
+      .replace(/\bpressure\s+(?:reducing\s+)?valve\b/g,' prv ')
+      .replace(/\bpressure\s+regulator\b/g,' prv ')
+      .replace(/\bwater\s+closet\b/g,' toilette ')
+      .replace(/\bclapet\s+(?:de\s+)?non\s*[- ]?retour\b/g,' checkvalve ')
+      .replace(/[^a-z0-9.]+/g,' ');
+    const syn={
+      elbow:'coude',coude:'coude',ells:'coude',ell:'coude',
+      tee:'tee',te:'tee',
+      trap:'ptrap',siphon:'ptrap',ptrap:'ptrap',
+      coupling:'coupling',couplage:'coupling',manchon:'coupling',
+      reducer:'reducer',reducteur:'reducer',reduction:'reducer',
+      bushing:'bushing',bague:'bushing',
+      ballvalve:'ballvalve',checkvalve:'checkvalve',clapet:'checkvalve',
+      waterheater:'waterheater',sumppump:'sumppump',
+      faucet:'robinet',robinet:'robinet',
+      copper:'cuivre',cuivre:'cuivre',pipe:'tuyau',tuyau:'tuyau',
+      adapter:'adaptateur',adaptor:'adaptateur',adaptateur:'adaptateur',
+      union:'union',nipple:'mamelon',mamelon:'mamelon',
+      wh:'waterheater',bv:'ballvalve',cv:'checkvalve',prv:'prv',
+      lav:'lavabo',lavatory:'lavabo',lavabo:'lavabo',wc:'toilette',toilet:'toilette',toilette:'toilette',
+      dwv:'dwv',abs:'abs',pvc:'pvc',pex:'pex',pexalpex:'pexalpex',cpvc:'cpvc'
+    };
+    const stop=new Set(['in','inch','inches','po','pouce','pouces','deg','degree','degrees','degre','degres','the','a','de','du','des','et','avec','pour','of']);
+    const out=[];
+    for(const t0 of s.split(/\s+/).filter(Boolean)){
+      if(stop.has(t0))continue;
+      let t=syn[t0]||t0;
+      if(/^\d+(?:\.\d+)?$/.test(t)){
+        const n=Number(t);
+        if(n===90||n===45){out.push(`angle${n}`,'coude');continue;}
+        if(n>0&&n<=24){out.push('dim'+String(n));continue;}
+      }
+      out.push(t);
+    }
+    return [...new Set(out)];
+  }
+  function oneEditApart(a,b){
+    if(a===b)return true;if(!a||!b||Math.abs(a.length-b.length)>1)return false;
+    let i=0,j=0,edits=0;while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue;}if(++edits>1)return false;if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++;}}
+    return edits+(i<a.length||j<b.length?1:0)<=1;
+  }
+  function smartTokenPresent(token,productTokens){
+    if(productTokens.has(token))return true;
+    if(token.startsWith('dim')||token.startsWith('angle')||token.length<5)return false;
+    for(const p of productTokens)if(p.length>=4&&oneEditApart(token,p))return true;
+    return false;
+  }
+  function smartProductScore(text,query,code=''){
+    const q=smartProductTokens(query);if(!q.length)return 1;
+    const pTokens=new Set(smartProductTokens(text));
+    if(!q.every(t=>smartTokenPresent(t,pTokens)))return -1;
+    const nq=normalizeSearch(query),nt=normalizeSearch(text),nc=normalizeSearch(code);let score=0;
+    if(nc&&nq===nc)score+=250;else if(nc&&nc.startsWith(nq))score+=120;
+    if(nq&&nt.includes(nq))score+=60;
+    const type=new Set(['coude','ptrap','tee','coupling','reducer','bushing','ballvalve','checkvalve','waterheater','sumppump','robinet','adaptateur','union','mamelon','lavabo','toilette','prv']);
+    for(const t of q){if(type.has(t))score+=35;else if(['abs','pvc','pex','cpvc','cuivre','pexalpex'].includes(t))score+=24;else if(t.startsWith('dim'))score+=20;else if(t.startsWith('angle'))score+=18;else score+=8;}
+    return score;
+  }
+  function smartProductMatch(text,query,code=''){return smartProductScore(text,query,code)>=0;}
   function cacheProductStatsFromArray(products){
     products=Array.isArray(products)?products:[];
     let active=0,warehouseUnits=0,low=0,out=0,onOrder=0,lowIncludingOut=0,costValue=0,saleValue=0;
@@ -285,7 +359,8 @@
     const categorySale={};
     for(let i=0;i<products.length;i++){
       const p=products[i]; byId.set(p.id,p);
-      rows[i]={p,text:p._search||normalizeSearch([p.code,p.description,p.category,p.supplierCategoryId].join(' '))};
+      const smartText=[p.code,p.description,p.category,p.supplierCategoryName,p.supplierCategoryId,p.brand,p.manufacturer].join(' ');
+      rows[i]={p,text:p._search||normalizeSearch(smartText),smartText};
       if(p.active!==false){
         active++; const qty=Number(p.warehouseQty||0),min=Number(p.minQty||0),cost=Number(p.costPrice||0),list=Number(p.listPrice||0); warehouseUnits+=qty; onOrder+=Number(p.onOrderQty||0); costValue+=qty*cost; saleValue+=qty*list; categorySale[p.category||'Autre']=(categorySale[p.category||'Autre']||0)+qty*list;
         if(qty===0) out++; else if(qty<=min) low++;
@@ -316,10 +391,12 @@
       if(filter==='low' && !(p.active!==false&&qty>0&&qty<=min)) continue;
       if(filter==='out' && !(p.active!==false&&qty===0)) continue;
       if(filter==='onorder' && !(Number(p.onOrderQty||0)>0)) continue;
-      if(q && !row.text.includes(q)) continue;
-      matches.push(p);
+      const score=q?smartProductScore(row.smartText||row.text,q,p.code):-1;
+      if(q&&score<0)continue;
+      matches.push({p,score});
     }
-    return {total:matches.length,items:matches.slice(offset,offset+limit),offset,limit};
+    if(q)matches.sort((a,b)=>b.score-a.score||String(a.p.description||'').localeCompare(String(b.p.description||''),'fr'));
+    return {total:matches.length,items:matches.slice(offset,offset+limit).map(x=>x.p),offset,limit};
   }
   function uid(prefix='id'){return prefix+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
   function audit(action,entity,details){
@@ -330,5 +407,5 @@
   function exportAll(){ensure(); const out={version:20,exportedAt:new Date().toISOString(),data:{}};Object.keys(DEFAULTS).forEach(k=>out.data[k]=get(k));return out;}
   function importAll(payload){if(!payload||!payload.data) throw new Error('Sauvegarde invalide');Object.keys(DEFAULTS).forEach(k=>{if(k in payload.data)set(k,payload.data[k]);});migrateCore();localStorage.setItem('perras_core_schema_version',CORE_SCHEMA_VERSION);invalidateCache();audit('Restauration','Système','Sauvegarde importée');}
 
-  window.PerrasDB={DEFAULTS,ensure,get,set,applyRemote,reset,uid,audit,exportAll,importAll,todayISO,queryProducts,productById,productStats,productStatsCached,normalizeSearch,loadProductsAsync,productsReady,productsProgress};
+  window.PerrasDB={DEFAULTS,ensure,get,set,applyRemote,reset,uid,audit,exportAll,importAll,todayISO,queryProducts,productById,productStats,productStatsCached,normalizeSearch,smartProductTokens,smartProductMatch,smartProductScore,loadProductsAsync,productsReady,productsProgress};
 })();
