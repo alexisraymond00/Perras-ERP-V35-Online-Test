@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0b2447" />
+  <title>Perras ERP V39.3 — Connexion</title>
+  <link rel="stylesheet" href="css/styles.css?v=39.3.1" />
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-brand">
+      <div>
+        <div class="brand-lockup">
+          <img class="login-logo" src="assets/perras-logo.png" alt="Perras">
+          <p>COMMERCIAL · RÉSIDENTIEL · URGENCE 24/7</p>
+          <div class="brand-tag">Perras ERP · V39.3 Online</div>
+        </div>
+        <div class="login-benefits">
+          <div><span class="check-dot">✓</span> Une seule base commune pour toute l’équipe</div>
+          <div><span class="check-dot">✓</span> Comptes Admin, Bureau et Technicien</div>
+          <div><span class="check-dot">✓</span> Ordinateur, tablette et téléphone</div>
+          <div><span class="check-dot">✓</span> Connexion sécurisée par identifiant et mot de passe</div>
+        </div>
+      </div>
+      <div class="login-visual"><div class="fleet">PERRAS · OPÉRATIONS CONNECTÉES</div></div>
+    </section>
+
+    <section class="login-panel">
+      <div class="login-card">
+        <h2>Connexion Perras ERP</h2>
+        <p class="lead">Entrez votre identifiant et votre mot de passe.</p>
+        <form id="loginForm">
+          <div class="field"><label for="username">Identifiant</label><input id="username" autocomplete="username" placeholder="admin1" required /></div>
+          <div class="field"><label for="password">Mot de passe</label><input id="password" type="password" autocomplete="current-password" required /></div>
+          <button class="btn btn-primary btn-block" type="submit">Se connecter</button>
+        </form>
+        <div class="auth-note" id="status" style="margin-top:12px">Connexion sécurisée à la base centrale Perras.</div>
+      </div>
+    </section>
+  </main>
+  <script src="js/cloud.js?v=39.3.1"></script>
+  <script>
+    const form=document.getElementById('loginForm'),status=document.getElementById('status');
+    (async()=>{try{const r=await fetch('/api/auth/me',{credentials:'same-origin'});if(r.ok)location.replace('app.html?v=39.3.1');}catch(_){}})();
+    form.addEventListener('submit',async e=>{
+      e.preventDefault();status.textContent='Connexion…';
+      try{const user=await PerrasCloud.login(document.getElementById('username').value,document.getElementById('password').value);status.textContent=`Bienvenue ${user.name}.`;location.replace('app.html?v=39.3.1');}
+      catch(err){status.textContent=err.message;}
+    });
+    if(new URLSearchParams(location.search).get('expired')==='1')status.textContent='Votre session est expirée. Reconnectez-vous.';
+  </script>
+</body>
+</html>
