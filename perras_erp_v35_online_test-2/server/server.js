@@ -2,8 +2,6 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const {createAllpriserService} = require('./allpriser');
-const {createOnlineService} = require('./online');
 
 // Petit chargeur .env sans dépendance externe.
 const ENV_FILE = path.join(__dirname,'.env');
@@ -19,7 +17,6 @@ if(fs.existsSync(ENV_FILE)){
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOT = path.resolve(__dirname, '..');
-const online = createOnlineService({serverDir:__dirname});
 const otpStore = new Map();
 const oauthStateStore = new Map();
 const REVIEW_STORE = path.join(__dirname,'google_reviews.json');
@@ -33,107 +30,9 @@ let productByCodeMap=new Map();
 let productStatsCache={total:0,active:0,warehouseUnits:0,low:0,out:0,onOrder:0,lowIncludingOut:0,costValue:0,saleValue:0,categorySale:{}};
 let productImportSession=null;
 let productPriceUpdateSession=null;
-const allpriser = createAllpriserService({configFile:path.join(__dirname,'allpriser_config.json')});
-// V35 — catalogues Winpriser importés depuis l'interface ERP.
-const ALLPRISER_UPDATE_ROOT = path.join(ROOT,'Winpriser_Updates');
-const ALLPRISER_STAGING = path.join(ALLPRISER_UPDATE_ROOT,'_staging');
-const ALLPRISER_REQUIRED_DBF = ['Red__01.dbf','Red__04.dbf','Red__05.dbf'];
-const ALLPRISER_DAT_STAGING = path.join(ALLPRISER_UPDATE_ROOT,'_staging_dat','REDBOOK.DAT');
-function resetAllpriserStaging(){fs.rmSync(ALLPRISER_STAGING,{recursive:true,force:true});fs.mkdirSync(ALLPRISER_STAGING,{recursive:true});}
-function receiveRawFile(req,dest,maxBytes=25*1024*1024){
-  return new Promise((resolve,reject)=>{
-    fs.mkdirSync(path.dirname(dest),{recursive:true});
-    const tmp=dest+'.part-'+process.pid+'-'+Date.now();let size=0,done=false;
-    const out=fs.createWriteStream(tmp);
-    const fail=(err)=>{if(done)return;done=true;try{out.destroy();}catch(_){}try{fs.rmSync(tmp,{force:true});}catch(_){}reject(err);};
-    req.on('data',chunk=>{size+=chunk.length;if(size>maxBytes)fail(new Error('Fichier trop volumineux (maximum 25 Mo).'));});
-    req.on('error',fail);out.on('error',fail);
-    out.on('finish',()=>{if(done)return;done=true;try{fs.renameSync(tmp,dest);resolve(size);}catch(e){reject(e);}});
-    req.pipe(out);
-  });
-}
-function finalizeAllpriserUpload(){
-  const missing=ALLPRISER_REQUIRED_DBF.filter(n=>!fs.existsSync(path.join(ALLPRISER_STAGING,n)));
-  if(missing.length)throw new Error('Fichier(s) manquant(s): '+missing.join(', '));
-  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-  const target=path.join(ALLPRISER_UPDATE_ROOT,'catalog_'+stamp);fs.mkdirSync(target,{recursive:true});
-  for(const n of ALLPRISER_REQUIRED_DBF)fs.copyFileSync(path.join(ALLPRISER_STAGING,n),path.join(target,n));
-  const previous=allpriser.folder();
-  try{
-    const st=allpriser.setFolder(target);
-    if(!st.ok)throw new Error(st.error||'Catalogue DBF invalide.');
-    fs.writeFileSync(path.join(target,'catalog_info.json'),JSON.stringify({importedAt:new Date().toISOString(),source:'ERP upload',count:st.count,revisedDate:st.revisedDate,updateBatch:st.updateBatch},null,2),'utf8');
-    resetAllpriserStaging();
-    return {...st,uploaded:true,catalogFolder:target};
-  }catch(e){
-    try{fs.rmSync(target,{recursive:true,force:true});}catch(_){}
-    try{if(previous&&ALLPRISER_REQUIRED_DBF.every(n=>fs.existsSync(path.join(previous,n))))allpriser.setFolder(previous);}catch(_){}
-    throw e;
-  }
- }
-function finalizeAllpriserDatUpload(){
-  if(!fs.existsSync(ALLPRISER_DAT_STAGING))throw new Error('REDBOOK.DAT manquant.');
-  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-  const target=path.join(ALLPRISER_UPDATE_ROOT,'catalog_dat_'+stamp);fs.mkdirSync(target,{recursive:true});
-  const targetFile=path.join(target,'REDBOOK.DAT');fs.copyFileSync(ALLPRISER_DAT_STAGING,targetFile);
-  const previousDat=allpriser.datFile(),previousFolder=allpriser.folder();
-  try{
-    const st=allpriser.setDatFile(targetFile);
-    if(!st.ok)throw new Error(st.error||'Catalogue DAT invalide.');
-    fs.writeFileSync(path.join(target,'catalog_info.json'),JSON.stringify({importedAt:new Date().toISOString(),source:'ERP DAT upload',file:'REDBOOK.DAT',count:st.count,revisedDate:st.revisedDate,updateBatch:st.updateBatch},null,2),'utf8');
-    try{fs.rmSync(path.dirname(ALLPRISER_DAT_STAGING),{recursive:true,force:true});}catch(_){}
-    return {...st,uploaded:true,catalogFolder:target,catalogFile:targetFile};
-  }catch(e){
-    try{fs.rmSync(target,{recursive:true,force:true});}catch(_){}
-    try{if(previousDat&&fs.existsSync(previousDat))allpriser.setDatFile(previousDat);else if(previousFolder)allpriser.setFolder(previousFolder);}catch(_){}
-    throw e;
-  }
-}
 
 function normText(v=''){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();}
 function normProductDescription(v=''){return normText(v).replace(/[’'`]/g,'').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
-function smartPlumbingTokens(v=''){
-  let s=normText(v).replace(/[½]/g,' 1/2 ').replace(/[¼]/g,' 1/4 ').replace(/[¾]/g,' 3/4 ');
-  s=s.replace(/(\d),(\d)/g,'$1.$2').replace(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/g,' $1 $2 ');
-  // Preserve dimensions as one canonical token: 1-1/2, 1 1/2, 1/2, etc.
-  s=s.replace(/(\d+)\s*[- ]\s*(\d+)\s*\/\s*(\d+)/g,(_,a,b,c)=>` dim${(Number(a)+Number(b)/Number(c)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
-  s=s.replace(/\b(\d+)\s*\/\s*(\d+)\b/g,(_,a,b)=>` dim${(Number(a)/Number(b)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
-  // Common plumbing phrases before punctuation removal.
-  s=s.replace(/\bp\s*[- ]?\s*trap\b/g,' ptrap ').replace(/\bball\s+valve\b/g,' ballvalve ').replace(/\bcheck\s+valve\b/g,' checkvalve ').replace(/\bwater\s+heater\b/g,' waterheater ').replace(/\bsump\s+pump\b/g,' sumppump ');
-  s=s.replace(/\bchauffe\s*[- ]?eau\b/g,' waterheater ').replace(/\bpompe\s+(?:de\s+)?puisard\b/g,' sumppump ').replace(/\bvalve\s+a\s+bille\b/g,' ballvalve ');
-  s=s.replace(/[^a-z0-9.]+/g,' ');
-  const raw=s.split(/\s+/).filter(Boolean), out=new Set();
-  const synonym={
-    elbow:'coude',coude:'coude',tee:'tee',te:'tee',trap:'ptrap',siphon:'ptrap',ptrap:'ptrap',
-    coupling:'coupling',manchon:'coupling',reducer:'reducer',reducteur:'reducer',reduction:'reducer',
-    bushing:'bushing',ballvalve:'ballvalve',checkvalve:'checkvalve',clapet:'checkvalve',
-    waterheater:'waterheater',sumppump:'sumppump',faucet:'robinet',robinet:'robinet',
-    copper:'cuivre',cuivre:'cuivre'
-  };
-  const stop=new Set(['in','inch','inches','po','pouce','pouces','deg','degree','degrees','degre','degres','the','a','de','du','des','et']);
-  for(const t0 of raw){
-    if(stop.has(t0))continue;
-    const t=synonym[t0]||t0;out.add(t);
-    if(/^\d+(?:\.\d+)?$/.test(t)){
-      const n=Number(t);if(n!==45&&n!==90&&n>0&&n<=24)out.add('dim'+String(n));
-      if(n===90){out.add('coude');out.add('coude90');}
-      if(n===45){out.add('coude');out.add('coude45');}
-    }
-    if(t==='coude')out.add('fitting');
-  }
-  return [...out];
-}
-function smartSearchScore(product,query){
-  const qTokens=smartPlumbingTokens(query);if(!qTokens.length)return 1;
-  const pTokens=product.__smartTokens||new Set(smartPlumbingTokens([product.code,product.description,product.supplierCategoryName,product.category].join(' ')));
-  for(const t of qTokens){if(!pTokens.has(t))return -1;}
-  let score=0;const qn=normText(query),code=normText(product.code),desc=normText(product.description);
-  if(code===qn)score+=1000;else if(code.startsWith(qn)&&qn)score+=300;
-  if(desc.includes(qn)&&qn.length>2)score+=90;
-  const weights={ptrap:35,coude:30,coude90:35,coude45:35,tee:30,coupling:28,reducer:28,bushing:28,ballvalve:32,checkvalve:32,waterheater:32,sumppump:32,abs:22,pvc:22,pex:22,cuivre:22};
-  for(const t of qTokens)score+=weights[t]||(/^dim/.test(t)?18:6);
-  return score;
-}
 function num(v,def=0){const raw=String(v??'').trim();if(!raw)return Number(def||0);let s=raw.replace(/\s/g,'').replace(/[$%]/g,'');if(s.includes(',')&&s.includes('.')){if(s.lastIndexOf(',')>s.lastIndexOf('.'))s=s.replace(/\./g,'').replace(',','.');else s=s.replace(/,/g,'');}else if(s.includes(','))s=s.replace(',','.');const n=Number(s.replace(/[^0-9.\-]/g,''));return Number.isFinite(n)?n:Number(def||0);}
 function normalizeProduct(p={},existing=null){
   const code=String(p.code||p.sku||p.item||'').trim();
@@ -153,26 +52,23 @@ function normalizeProduct(p={},existing=null){
     perras1Price:num(p.perras1Price,existing?.perras1Price||0),
     active:p.active===undefined?(existing?.active!==false):p.active!==false,
     image:String(p.image??existing?.image??''),
-    images:Array.isArray(p.images)?p.images:(Array.isArray(existing?.images)?existing.images:[]),
-    photoStatus:String(p.photoStatus??existing?.photoStatus??((p.image||existing?.image)?'found':'missing')),
-    photoConfidence:String(p.photoConfidence??existing?.photoConfidence??((p.image||existing?.image)?'manual':'')),
     source:String(p.source??existing?.source??'manuel'),
     updatedAt:new Date().toISOString()
   };
 }
 function rebuildProductIndexes(){
   productByIdMap=new Map();productByCodeMap=new Map();
-  let active=0,warehouseUnits=0,low=0,out=0,onOrder=0,costValue=0,saleValue=0;const categorySale={};
+  let active=0,warehouseUnits=0,low=0,out=0,onOrder=0,costValue=0,saleValue=0;const categorySale={},categoryCount={};
   for(const p of productStore){
-    productByIdMap.set(p.id,p);if(p.code)productByCodeMap.set(String(p.code).toLowerCase(),p);const searchText=normText([p.code,p.description,p.supplierCategoryName,p.category].join(' '));const smart=new Set(smartPlumbingTokens([p.code,p.description,p.supplierCategoryName,p.category].join(' ')));try{Object.defineProperty(p,'__search',{value:searchText,writable:true,configurable:true,enumerable:false});Object.defineProperty(p,'__smartTokens',{value:smart,writable:true,configurable:true,enumerable:false});}catch(_){p.__search=searchText;p.__smartTokens=smart;}
-    if(p.active===false)continue;active++;const q=num(p.warehouseQty),m=num(p.minQty),cost=num(p.costPrice),list=num(p.listPrice);
+    productByIdMap.set(p.id,p);if(p.code)productByCodeMap.set(String(p.code).toLowerCase(),p);try{Object.defineProperty(p,'__search',{value:normText([p.code,p.description,p.supplierCategoryName,p.category].join(' ')),writable:true,configurable:true,enumerable:false});}catch(_){p.__search=normText([p.code,p.description,p.supplierCategoryName,p.category].join(' '));}
+    if(p.active===false)continue;active++;categoryCount[String(p.supplierCategoryId||'')]=(categoryCount[String(p.supplierCategoryId||'')]||0)+1;const q=num(p.warehouseQty),m=num(p.minQty),cost=num(p.costPrice),list=num(p.listPrice);
     warehouseUnits+=q;onOrder+=num(p.onOrderQty);costValue+=q*cost;saleValue+=q*list;{const catName=p.supplierCategoryName||p.category||'À classer';categorySale[catName]=(categorySale[catName]||0)+q*list;}
     if(q===0)out++;else if(q<=m)low++;
   }
-  productStatsCache={total:productStore.length,active,warehouseUnits,low,out,onOrder,lowIncludingOut:low+out,costValue,saleValue,categorySale,updatedAt:new Date().toISOString()};
+  productStatsCache={total:productStore.length,active,warehouseUnits,low,out,onOrder,lowIncludingOut:low+out,costValue,saleValue,categorySale,categoryCount,updatedAt:new Date().toISOString()};
 }
 function migratePreviousProductStoreIfNeeded(){
-  // Facilite le passage V31/V32/V33 -> V34 : si ce dossier est vide, récupère automatiquement
+  // Facilite le passage V31/V32/V33/V34/V35/V36/V37 -> V38 : si ce dossier est vide, récupère automatiquement
   // le catalogue du dossier V31 voisin le plus récent. Aucun catalogue existant n'est écrasé.
   try{
     let current=[];
@@ -180,7 +76,7 @@ function migratePreviousProductStoreIfNeeded(){
     if(Array.isArray(current)&&current.length) return;
     const parent=path.dirname(ROOT),candidates=[];
     for(const ent of fs.readdirSync(parent,{withFileTypes:true})){
-      if(!ent.isDirectory()||!/v3[123]/i.test(ent.name)||!/perras/i.test(ent.name)) continue;
+      if(!ent.isDirectory()||!/v3[1234567]/i.test(ent.name)||!/perras/i.test(ent.name)) continue;
       const f=path.join(parent,ent.name,'server','products_store.json');
       try{
         const rows=JSON.parse(fs.readFileSync(f,'utf8'));
@@ -199,31 +95,17 @@ function loadProductStore(){
   try{const raw=JSON.parse(fs.readFileSync(PRODUCTS_STORE,'utf8'));productStore=Array.isArray(raw)?raw.map(x=>normalizeProduct(x,x)):[];}catch(_){productStore=[];}
   rebuildProductIndexes();
 }
-function saveProductStore(){const tmp=PRODUCTS_STORE+'.tmp';fs.writeFileSync(tmp,JSON.stringify(productStore),'utf8');fs.renameSync(tmp,PRODUCTS_STORE);rebuildProductIndexes();online.saveProducts(productStore).catch(e=>console.error('Sauvegarde produits online:',e.message));}
+function saveProductStore(){const tmp=PRODUCTS_STORE+'.tmp';fs.writeFileSync(tmp,JSON.stringify(productStore),'utf8');fs.renameSync(tmp,PRODUCTS_STORE);rebuildProductIndexes();}
 function productQuery(params){
-  const rawQ=String(params.get('q')||params.get('query')||'').trim(),filter=params.get('filter')||'all',photoFilter=params.get('photoFilter')||'';
-  const supplierCategoryId=String(params.get('supplierCategoryId')||'').trim();
+  const q=normText(params.get('q')||params.get('query')||''),filter=params.get('filter')||'all';
   const offset=Math.max(0,Number(params.get('offset')||0)),limit=Math.max(1,Math.min(500,Number(params.get('limit')||48)));
-  const activeOnly=params.get('activeOnly')==='1';let rows=[];
+  const activeOnly=params.get('activeOnly')==='1',supplierCategoryId=String(params.get('supplierCategoryId')||'');let rows=[];
   for(const p of productStore){if(activeOnly&&p.active===false)continue;if(supplierCategoryId&&String(p.supplierCategoryId||'')!==supplierCategoryId)continue;const qty=num(p.warehouseQty),min=num(p.minQty);
     if(filter==='low'&&!(p.active!==false&&qty>0&&qty<=min))continue;if(filter==='out'&&!(p.active!==false&&qty===0))continue;if(filter==='onorder'&&!(num(p.onOrderQty)>0))continue;
-    const hasPhoto=Boolean(p.image||(Array.isArray(p.images)&&p.images.length));if(photoFilter==='missing'&&hasPhoto)continue;if(photoFilter==='found'&&(!hasPhoto||p.photoStatus==='review'))continue;if(photoFilter==='review'&&p.photoStatus!=='review')continue;
-    let score=1;if(rawQ){score=smartSearchScore(p,rawQ);if(score<0)continue;}rows.push({p,score});
+    if(q&&!String(p.__search||normText([p.code,p.description,p.supplierCategoryName,p.category].join(' '))).includes(q))continue;rows.push(p);
   }
-  if(rawQ)rows.sort((a,b)=>b.score-a.score||String(a.p.description||'').localeCompare(String(b.p.description||''),'fr'));
-  const items=rows.slice(offset,offset+limit).map(x=>x.p);
-  return {total:rows.length,offset,limit,items,stats:productStatsCache};
+  return {total:rows.length,offset,limit,items:rows.slice(offset,offset+limit),stats:productStatsCache};
 }
-function productCategoryCounts(activeOnly=true){
-  const byId={};let total=0,unclassified=0;
-  for(const p of productStore){
-    if(activeOnly&&p.active===false)continue;
-    total++;const id=String(p.supplierCategoryId||'');
-    if(!id)unclassified++;else byId[id]=(byId[id]||0)+1;
-  }
-  return {total,byId,unclassified};
-}
-
 loadProductStore();
 
 function json(res, status, body){
@@ -244,6 +126,19 @@ function writeJson(file,value){fs.writeFileSync(file,JSON.stringify(value,null,2
 function normalizePhone(v){ return String(v||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,''); }
 function e164(v){ const p=normalizePhone(v); return p.length===10?`+1${p}`:`+${p}`; }
 function randomCode(){ return String(crypto.randomInt(100000,1000000)); }
+
+
+async function sendPurchaseOrderEmail(body={}){
+  const to=String(body.to||'').trim(),subject=String(body.subject||'Bon de commande Perras').trim();
+  if(!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new Error('Courriel fournisseur invalide.');
+  const html=String(body.html||''),text=String(body.text||'');
+  const key=process.env.RESEND_API_KEY||'',from=process.env.PO_EMAIL_FROM||process.env.EMAIL_FROM||'';
+  if(!key || !from) throw new Error('Envoi direct non configuré. Ajoutez RESEND_API_KEY et PO_EMAIL_FROM dans server/.env.');
+  const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Authorization':`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({from,to:[to],subject,html,text})});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data?.message||data?.error?.message||`Service courriel ${r.status}`);
+  return data;
+}
 
 async function sendTwilioSms(phone, code){
   const sid=process.env.TWILIO_ACCOUNT_SID;
@@ -402,15 +297,7 @@ function staticFile(req,res){
 
 const server=http.createServer(async (req,res)=>{
   const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-  if(req.method==='GET' && url.pathname==='/api/health') return json(res,200,{ok:true,online:true,storage:online.mode(),sms:!!(process.env.TWILIO_ACCOUNT_SID&&process.env.TWILIO_AUTH_TOKEN&&process.env.TWILIO_FROM_NUMBER),nexus:nexusConfigured(),googleOAuthReady:googleOAuthReady(),googleConnected:googleConnected(),googleReviews:googleConfigured(),googleLastSync:readReviewStore().lastSync});
-
-  // V35 Online — authentification serveur + données communes.
-  if(req.method==='POST' && url.pathname==='/api/auth/login'){
-    try{const body=await parseBody(req),user=await online.authenticate(body.username,body.password);if(!user)return json(res,401,{ok:false,error:'Identifiant ou mot de passe invalide.'});const sess=await online.createSession(user);res.setHeader('Set-Cookie',online.cookieFor(sess.token));return json(res,200,{ok:true,user,expiresAt:sess.expiresAt});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/auth/logout'){await online.deleteSession(req);res.setHeader('Set-Cookie',online.cookieFor('',true));return json(res,200,{ok:true});}
-  if(req.method==='GET' && url.pathname==='/api/auth/me'){const user=await online.sessionUser(req);return user?json(res,200,{ok:true,user}):json(res,401,{ok:false,error:'Session expirée'});}
-
+  if(req.method==='GET' && url.pathname==='/api/health') return json(res,200,{ok:true,sms:!!(process.env.TWILIO_ACCOUNT_SID&&process.env.TWILIO_AUTH_TOKEN&&process.env.TWILIO_FROM_NUMBER),nexus:nexusConfigured(),googleOAuthReady:googleOAuthReady(),googleConnected:googleConnected(),googleReviews:googleConfigured(),googleLastSync:readReviewStore().lastSync});
 
   if(req.method==='POST' && url.pathname==='/api/auth/request'){
     try{const {phone}=await parseBody(req);const p=normalizePhone(phone);if(p.length!==10)return json(res,400,{error:'Numéro invalide'});const code=randomCode();otpStore.set(p,{code,expires:Date.now()+10*60*1000,attempts:0});const result=await sendTwilioSms(p,code);return json(res,200,{ok:true,devCode:result.dev?code:undefined});}
@@ -422,31 +309,12 @@ const server=http.createServer(async (req,res)=>{
   }
 
 
-  // Toutes les autres API sont privées en V35 Online.
-  const onlineUser=await online.sessionUser(req);
-  const isPublicWebhook=(url.pathname==='/api/google-reviews/pubsub');
-  if(url.pathname.startsWith('/api/') && !isPublicWebhook && !onlineUser) return json(res,401,{ok:false,error:'Connexion requise'});
-
-  if(req.method==='GET' && url.pathname==='/api/cloud/bootstrap'){
-    const rows=await online.getStateAll(),now=new Date().toISOString();return json(res,200,{ok:true,user:onlineUser,rows,serverTime:now,storage:online.mode()});
-  }
-  if(req.method==='GET' && url.pathname==='/api/cloud/changes'){
-    const rows=await online.getStateChanges(url.searchParams.get('since')||'1970-01-01T00:00:00.000Z');return json(res,200,{ok:true,rows,serverTime:new Date().toISOString()});
-  }
-  if(req.method==='POST' && url.pathname==='/api/cloud/state'){
-    try{const body=await parseBody(req);const meta=await online.setState(body.key,body.value,onlineUser);return json(res,200,{ok:true,...meta});}catch(e){return json(res,403,{ok:false,error:String(e.message||e)});}
-  }
-
-  const adminOnly = url.pathname.startsWith('/api/allpriser/') ||
-    ['/api/products/upsert','/api/products/patch','/api/products/import/start','/api/products/import/chunk','/api/products/import/finish','/api/products/price-analysis/start','/api/products/price-analysis/chunk','/api/products/price-analysis/summary','/api/products/price-analysis/apply','/api/product-images/upload','/api/product-images/delete','/api/product-images/primary'].includes(url.pathname) ||
-    url.pathname.startsWith('/api/google-oauth/') || url.pathname.startsWith('/api/google-business/') || url.pathname==='/api/google-reviews/sync';
-  if(adminOnly && onlineUser.role!=='admin') return json(res,403,{ok:false,error:'Accès administrateur requis'});
-
-
   /* ===================== Catalogue produits persistant ===================== */
   if(req.method==='GET' && url.pathname==='/api/products/stats') return json(res,200,{ok:true,stats:productStatsCache});
-  if(req.method==='GET' && url.pathname==='/api/products/category-counts') return json(res,200,{ok:true,...productCategoryCounts(url.searchParams.get('activeOnly')!=='0')});
   if(req.method==='GET' && url.pathname==='/api/products') return json(res,200,{ok:true,...productQuery(url.searchParams)});
+  if(req.method==='POST' && url.pathname==='/api/products/category-sync'){
+    try{const {categoryId,name}=await parseBody(req);const cid=String(categoryId||''),label=String(name||'').trim();if(!cid||!label)return json(res,400,{error:'Catégorie invalide'});let changed=0;for(const p of productStore){if(String(p.supplierCategoryId||'')===cid){p.category=label;p.supplierCategoryName=label;p.updatedAt=new Date().toISOString();changed++;}}if(changed)saveProductStore();return json(res,200,{ok:true,changed,stats:productStatsCache});}catch(e){return json(res,400,{error:String(e.message||e)});}
+  }
   if(req.method==='POST' && url.pathname==='/api/products/lookup'){
     try{const body=await parseBody(req),ids=Array.isArray(body.ids)?body.ids.slice(0,1000):[];return json(res,200,{ok:true,items:ids.map(id=>productByIdMap.get(String(id))).filter(Boolean)});}catch(e){return json(res,400,{ok:false,error:'Recherche produits invalide'});}
   }
@@ -455,42 +323,6 @@ const server=http.createServer(async (req,res)=>{
   }
   if(req.method==='POST' && url.pathname==='/api/products/patch'){
     try{const body=await parseBody(req),id=String(body.id||''),existing=productByIdMap.get(id);if(!existing)return json(res,404,{error:'Produit introuvable'});const p=normalizeProduct({...existing,...(body.patch||{}),id},existing),i=productStore.findIndex(x=>x.id===id);productStore[i]=p;saveProductStore();return json(res,200,{ok:true,product:p,stats:productStatsCache});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
-  }
-
-  if(req.method==='GET' && url.pathname==='/api/products/photo-stats'){
-    let found=0,review=0,missing=0;for(const p of productStore){const has=Boolean(p.image||(Array.isArray(p.images)&&p.images.length));if(p.photoStatus==='review')review++;else if(has)found++;else missing++;}return json(res,200,{ok:true,total:productStore.length,found,review,missing});
-  }
-  if(req.method==='GET' && url.pathname.startsWith('/api/product-images/file/')){
-    try{const key=decodeURIComponent(url.pathname.slice('/api/product-images/file/'.length));const row=await online.loadBinary(key);if(!row)return json(res,404,{error:'Image introuvable'});res.writeHead(200,{'Content-Type':row.metadata?.mime||'image/jpeg','Cache-Control':'public, max-age=86400'});return res.end(row.content);}catch(e){return json(res,404,{error:'Image introuvable'});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/product-images/upload'){
-    try{
-      const body=await parseBody(req),id=String(body.productId||''),existing=productByIdMap.get(id);if(!existing)return json(res,404,{error:'Produit introuvable'});
-      const images=Array.isArray(existing.images)?[...existing.images]:[];let ref;
-      if(body.dataUrl){const m=String(body.dataUrl).match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);if(!m)throw new Error('Image invalide');const buf=Buffer.from(m[2],'base64');if(buf.length>2*1024*1024)throw new Error('Image trop lourde après compression (max 2 Mo)');const imageId='img_'+crypto.randomUUID().replace(/-/g,'').slice(0,18),key=`product:${id}:${imageId}`;await online.saveBinary(key,buf,{mime:m[1],name:String(body.name||imageId)});ref={id:imageId,key,url:'/api/product-images/file/'+encodeURIComponent(key),name:String(body.name||'Photo produit'),source:'upload'};}
-      else if(body.url){const u=String(body.url).trim();if(!/^https?:\/\//i.test(u))throw new Error('URL image invalide');ref={id:'url_'+crypto.randomUUID().replace(/-/g,'').slice(0,18),key:'',url:u,name:String(body.name||'Image web'),source:'url'};}
-      else throw new Error('Photo manquante');
-      images.push(ref);const primary=body.makePrimary===false?(existing.image||ref.url):ref.url;const p=normalizeProduct({...existing,images,image:primary,photoStatus:'found',photoConfidence:String(body.confidence||'manual')},existing),i=productStore.findIndex(x=>x.id===id);productStore[i]=p;saveProductStore();return json(res,200,{ok:true,product:p});
-    }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/product-images/delete'){
-    try{const body=await parseBody(req),id=String(body.productId||''),imageId=String(body.imageId||''),existing=productByIdMap.get(id);if(!existing)return json(res,404,{error:'Produit introuvable'});const images=Array.isArray(existing.images)?[...existing.images]:[],target=images.find(x=>x.id===imageId);if(target?.key)await online.deleteBinary(target.key);const kept=images.filter(x=>x.id!==imageId),primary=existing.image===target?.url?(kept[0]?.url||''):existing.image;const p=normalizeProduct({...existing,images:kept,image:primary,photoStatus:kept.length?'found':'missing',photoConfidence:kept.length?(existing.photoConfidence||'manual'):''},existing),i=productStore.findIndex(x=>x.id===id);productStore[i]=p;saveProductStore();return json(res,200,{ok:true,product:p});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/product-images/primary'){
-    try{const body=await parseBody(req),id=String(body.productId||''),imageId=String(body.imageId||''),existing=productByIdMap.get(id);if(!existing)return json(res,404,{error:'Produit introuvable'});const target=(existing.images||[]).find(x=>x.id===imageId);if(!target)return json(res,404,{error:'Photo introuvable'});const p=normalizeProduct({...existing,image:target.url,photoStatus:'found'},existing),i=productStore.findIndex(x=>x.id===id);productStore[i]=p;saveProductStore();return json(res,200,{ok:true,product:p});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/inventory/transfer'){
-    try{
-      const body=await parseBody(req),from=String(body.from||''),to=String(body.to||''),items=Array.isArray(body.items)?body.items:[];if(!from||!to||from===to)throw new Error('Provenance et destination invalides');if(!items.length)throw new Error('Aucun produit à transférer');
-      const usersState=(await online.getState('users'))?.value||[],truckState=(await online.getState('truckStock'))?.value||[],history=(await online.getState('stockTransfers'))?.value||[];const trucksState=(await online.getState('trucks'))?.value||[];
-      if(onlineUser.role==='tech'){const me=usersState.find(u=>u.id===onlineUser.id),mine=String(me?.truckId||'');if(!mine||![from,to].every(x=>x==='warehouse'||x===mine)||(!([from,to].includes('warehouse')&&[from,to].includes(mine))))throw new Error('Un technicien peut transférer seulement entre la shop et son camion.');}
-      const stock=truckState.map(x=>({...x}));const getTruckQty=(truckId,productId)=>Number(stock.find(x=>x.truckId===truckId&&x.productId===productId)?.qty||0);const setTruckQty=(truckId,productId,qty)=>{let r=stock.find(x=>x.truckId===truckId&&x.productId===productId);if(!r){r={truckId,productId,qty:0};stock.push(r);}r.qty=Math.max(0,Number(qty||0));};
-      const clean=[];for(const row of items){const productId=String(row.productId||''),qty=Math.max(0,Number(row.qty||0)),p=productByIdMap.get(productId);if(!p||!qty)continue;const available=from==='warehouse'?Number(p.warehouseQty||0):getTruckQty(from,productId);if(qty>available)throw new Error(`${p.code}: seulement ${available} disponible(s) à la source.`);clean.push({p,productId,qty});}
-      if(!clean.length)throw new Error('Aucune quantité valide.');
-      for(const x of clean){if(from==='warehouse')x.p.warehouseQty=Number(x.p.warehouseQty||0)-x.qty;else setTruckQty(from,x.productId,getTruckQty(from,x.productId)-x.qty);if(to==='warehouse')x.p.warehouseQty=Number(x.p.warehouseQty||0)+x.qty;else setTruckQty(to,x.productId,getTruckQty(to,x.productId)+x.qty);}
-      const locName=id=>id==='warehouse'?'Shop':('Camion '+(trucksState.find(t=>t.id===id)?.number||id));const transfer={id:'tr_'+Date.now().toString(36)+crypto.randomBytes(3).toString('hex'),at:new Date().toISOString(),userId:onlineUser.id,userName:onlineUser.name,from,to,fromLabel:locName(from),toLabel:locName(to),items:clean.map(x=>({productId:x.productId,code:x.p.code,description:x.p.description,qty:x.qty}))};history.unshift(transfer);
-      await online.setState('truckStock',stock,onlineUser);const recentHistory=history.slice(0,2000);await online.setState('stockTransfers',recentHistory,onlineUser);saveProductStore();return json(res,200,{ok:true,transfer,truckStock:stock,stockTransfers:recentHistory,stats:productStatsCache});
-    }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
   if(req.method==='POST' && url.pathname==='/api/products/import/start'){
     try{
@@ -537,71 +369,6 @@ const server=http.createServer(async (req,res)=>{
     productStore=[...productImportSession.map.values()];
     const result={mode:productImportSession.mode,received:productImportSession.received,added:productImportSession.added,updated:productImportSession.updated,priceUpdated:productImportSession.priceUpdated,notFound:productImportSession.notFound,total:productStore.length};
     productImportSession=null;saveProductStore();return json(res,200,{ok:true,...result,stats:productStatsCache});
-  }
-
-  // V36 — téléversement direct de REDBOOK.DAT (méthode recommandée).
-  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-dat'){
-    try{
-      fs.rmSync(path.dirname(ALLPRISER_DAT_STAGING),{recursive:true,force:true});
-      const bytes=await receiveRawFile(req,ALLPRISER_DAT_STAGING,30*1024*1024);
-      const result=finalizeAllpriserDatUpload();
-      try{await online.saveBinary('REDBOOK.DAT',fs.readFileSync(result.catalogFile),{count:result.count,revisedDate:result.revisedDate,updateBatch:result.updateBatch,importedAt:new Date().toISOString()});}catch(e){console.error('Sauvegarde REDBOOK.DAT online:',e.message);}
-      return json(res,200,{...result,bytes});
-    }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
-  }
-
-  // V35 — téléversement direct des 3 DBF Winpriser depuis Documents / le dossier Winpriser.
-  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-reset'){
-    try{resetAllpriserStaging();return json(res,200,{ok:true});}catch(e){return json(res,500,{ok:false,error:String(e.message||e)});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-file'){
-    const name=String(url.searchParams.get('name')||'');
-    const canonical=ALLPRISER_REQUIRED_DBF.find(n=>n.toLowerCase()===name.toLowerCase());
-    if(!canonical)return json(res,400,{ok:false,error:'Fichier DBF non permis. Utilisez Red__01.dbf, Red__04.dbf ou Red__05.dbf.'});
-    try{const bytes=await receiveRawFile(req,path.join(ALLPRISER_STAGING,canonical));return json(res,200,{ok:true,name:canonical,bytes});}
-    catch(e){return json(res,400,{ok:false,error:String(e.message||e),name:canonical});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-finalize'){
-    try{return json(res,200,finalizeAllpriserUpload());}
-    catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
-  }
-
-  // V34 Allpriser direct — lit les DBF Winpriser sans export Excel.
-  if(req.method==='GET' && url.pathname==='/api/allpriser/status'){
-    return json(res,200,allpriser.status());
-  }
-  if(req.method==='POST' && url.pathname==='/api/allpriser/config'){
-    try{const body=await parseBody(req);return json(res,200,allpriser.setFolder(body.path));}
-    catch(e){return json(res,400,{ok:false,error:String(e.message||e),path:allpriser.folder(),candidates:allpriser.candidateFolders()});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/allpriser/detect'){
-    try{return json(res,200,allpriser.detectFolder());}
-    catch(e){return json(res,500,{ok:false,error:String(e.message||e),path:allpriser.folder()});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/allpriser/price-analysis'){
-    try{
-      const body=await parseBody(req),thresholdPct=Math.max(0,Number(body.thresholdPct)||30);
-      const result=allpriser.compareByDescription(productStore.filter(p=>p.active!==false),thresholdPct);
-      return json(res,200,result);
-    }catch(e){return json(res,503,{ok:false,error:String(e.message||e),path:allpriser.folder()});}
-  }
-  if(req.method==='POST' && url.pathname==='/api/allpriser/price-apply'){
-    try{
-      const body=await parseBody(req),thresholdPct=Math.max(0,Number(body.thresholdPct)||30),ids=new Set((Array.isArray(body.ids)?body.ids:[]).map(String));
-      if(!ids.size)return json(res,400,{ok:false,error:'Aucune mise à jour sélectionnée.'});
-      // Refaire l'analyse avec le catalogue Winpriser courant avant d'écrire les prix.
-      const fresh=allpriser.compareByDescription(productStore.filter(p=>p.active!==false),thresholdPct),byId=new Map((fresh.changes||[]).map(c=>[String(c.id),c]));
-      let updated=0,reviewUpdated=0;
-      for(const id of ids){
-        const c=byId.get(id),existing=productByIdMap.get(id);if(!c||!existing||existing.active===false)continue;
-        const patch={...existing,listPrice:Number(c.newPrice||0),source:existing.source||'winpriser',allpriserNctlg:c.allpriserNctlg,allpriserSibca:c.allpriserSibca||'',allpriserRevisedDate:c.revisedDate||'',allpriserUpdateBatch:c.updateBatch||'',allpriserLastSync:new Date().toISOString(),allpriserMatchMethod:c.matchMethod||'Description'};
-        // IMPORTANT : Allpriser ne touche qu'au Prix Liste. Les autres calculs demeurent ceux du ERP.
-        const normalized=normalizeProduct(patch,existing),i=productStore.findIndex(x=>x.id===existing.id);
-        if(i>=0){productStore[i]=normalized;updated++;if(c.needsReview)reviewUpdated++;}
-      }
-      saveProductStore();
-      return json(res,200,{ok:true,updated,reviewUpdated,total:productStore.length,stats:productStatsCache});
-    }catch(e){return json(res,503,{ok:false,error:String(e.message||e)});}
   }
 
   // V33 — Analyse puis mise à jour des Prix Liste Winpriser par DESCRIPTION.
@@ -673,7 +440,7 @@ const server=http.createServer(async (req,res)=>{
   }
 
   if(req.method==='POST' && url.pathname==='/api/nexus'){
-    try{const body=await parseBody(req);body.role=onlineUser.role;body.name=onlineUser.name;const result=await askNexusAI(body);return json(res,200,{ok:true,...result});}
+    try{const body=await parseBody(req);const result=await askNexusAI(body);return json(res,200,{ok:true,...result});}
     catch(e){return json(res,503,{ok:false,error:String(e.message||e),configured:nexusConfigured()});}
   }
 
@@ -690,6 +457,13 @@ const server=http.createServer(async (req,res)=>{
     if(!pending||Date.now()-pending.created>15*60*1000||!code)return redirect(res,'/app.html?google=error#reports');
     try{await exchangeGoogleCode(code,pending.redirectUri);return redirect(res,'/app.html?google=connected#reports');}
     catch(e){console.error('OAuth Google:',e.message);return redirect(res,`/app.html?google=error&reason=${encodeURIComponent(e.message)}#reports`);}
+  }
+
+  if(req.method==='POST' && url.pathname==='/api/purchase-orders/email'){
+    try{
+      const body=await parseBody(req),result=await sendPurchaseOrderEmail(body);
+      return json(res,200,{ok:true,id:result?.id||'',sentAt:new Date().toISOString()});
+    }catch(e){return json(res,503,{ok:false,error:String(e.message||e)});}
   }
   if(req.method==='GET' && url.pathname==='/api/google-business/discover'){
     try{return json(res,200,{ok:true,locations:await discoverGoogleLocations(),businesses:googleBusinessConfigs()});}
@@ -714,24 +488,15 @@ const server=http.createServer(async (req,res)=>{
   staticFile(req,res);
 });
 
-async function startV35Online(){
-  await online.init();
-  const cloudProducts=await online.loadProducts();
-  if(Array.isArray(cloudProducts)&&cloudProducts.length){productStore=cloudProducts.map(x=>normalizeProduct(x,x));rebuildProductIndexes();}
-  else await online.saveProducts(productStore);
+server.listen(PORT,()=>{
+  console.log(`Perras ERP: http://localhost:${PORT}`);
+  console.log(`Catalogue produits serveur: ${productStore.length} produit(s).`);
+  console.log(process.env.TWILIO_ACCOUNT_SID?'SMS Twilio activé.':'Mode développement: le code SMS sera affiché à l’écran.');
+  console.log(nexusConfigured()?'Nexus AI connecté à OpenAI.':'Nexus AI: ajoutez OPENAI_API_KEY dans server/.env.');
+  console.log(googleConfigured()?'Avis Google Business Profile activés.':googleConnected()?'Google connecté; associez les fiches dans Rapports > Avis Google.':'Avis Google: cliquez Connecter Google après avoir configuré les identifiants OAuth.');
+});
 
-  // Sur Render, le disque web est éphémère. On restaure le dernier REDBOOK.DAT depuis PostgreSQL.
-  try{const stored=await online.loadBinary('REDBOOK.DAT');if(stored?.content){const dir=path.join('/tmp','perras-winpriser');fs.mkdirSync(dir,{recursive:true});const f=path.join(dir,'REDBOOK.DAT');fs.writeFileSync(f,stored.content);allpriser.setDatFile(f);}}catch(e){console.error('Restauration REDBOOK.DAT:',e.message);}
-
-  server.listen(PORT,'0.0.0.0',()=>{
-    console.log(`Perras ERP V35 Online: http://localhost:${PORT}`);
-    console.log(`Stockage central: ${online.mode()}.`);
-    console.log(`Catalogue produits serveur: ${productStore.length} produit(s).`);
-    console.log(nexusConfigured()?'Nexus AI connecté à OpenAI.':'Nexus AI: ajoutez OPENAI_API_KEY dans les variables d’environnement.');
-  });
-  if(googleConfigured()){
-    setTimeout(()=>syncGoogleReviews().catch(e=>console.error('Sync Google initiale:',e.message)),2500);
-    setInterval(()=>syncGoogleReviews().catch(e=>console.error('Sync Google périodique:',e.message)),15*60*1000).unref();
-  }
+if(googleConfigured()){
+  setTimeout(()=>syncGoogleReviews().catch(e=>console.error('Sync Google initiale:',e.message)),2500);
+  setInterval(()=>syncGoogleReviews().catch(e=>console.error('Sync Google périodique:',e.message)),15*60*1000).unref();
 }
-startV35Online().catch(e=>{console.error('Démarrage V35 Online impossible:',e);process.exit(1);});
