@@ -5,6 +5,7 @@
   const $=s=>document.querySelector(s);
   const content=$('#content');
   const modalRoot=$('#modalRoot');
+  window.PERRAS_BUILD='39.3.1';document.documentElement.dataset.perrasBuild='39.3.1';console.info('Perras ERP V39.3.1 chargé');
 
   const LABELS={admin:'Admin',bureau:'Bureau',tech:'Technicien'};
   const CATEGORIES=['Chauffe-eau','Plomberie générale','Drain','Pompe','Robinetterie','Sanitaire','Fuite / urgence','Installation','Entretien','Inspection','Autre'];
