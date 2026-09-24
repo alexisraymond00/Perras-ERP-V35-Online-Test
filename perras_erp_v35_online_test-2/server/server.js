@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {createOnlineService} = require('./online');
+const {createAllpriserService} = require('./allpriser');
 
 // Petit chargeur .env sans dépendance externe.
 const ENV_FILE = path.join(__dirname,'.env');
@@ -29,25 +30,129 @@ const PRODUCTS_STORE = path.join(__dirname,'products_store.json');
 let productStore=[];
 let productByIdMap=new Map();
 let productByCodeMap=new Map();
+let productTokenIndex=new Map();
+let productSearchVocabulary=[];
+let productTokenLengthBuckets=new Map();
+let productSearchCache=new Map();
+let customSearchAliases={};
+let learnedSearchBoosts={};
 let productStatsCache={total:0,active:0,warehouseUnits:0,low:0,out:0,onOrder:0,lowIncludingOut:0,costValue:0,saleValue:0,categorySale:{}};
 let productImportSession=null;
 let productPriceUpdateSession=null;
 
+const allpriser = createAllpriserService({configFile:path.join(__dirname,'allpriser_config.json')});
+const ALLPRISER_UPDATE_ROOT = path.join(ROOT,'Winpriser_Updates');
+const ALLPRISER_STAGING = path.join(ALLPRISER_UPDATE_ROOT,'_staging');
+const ALLPRISER_REQUIRED_DBF = ['Red__01.dbf','Red__04.dbf','Red__05.dbf'];
+const ALLPRISER_DAT_STAGING = path.join(ALLPRISER_UPDATE_ROOT,'_staging_dat','REDBOOK.DAT');
+function resetAllpriserStaging(){fs.rmSync(ALLPRISER_STAGING,{recursive:true,force:true});fs.mkdirSync(ALLPRISER_STAGING,{recursive:true});}
+function receiveRawFile(req,dest,maxBytes=30*1024*1024){
+  return new Promise((resolve,reject)=>{
+    fs.mkdirSync(path.dirname(dest),{recursive:true});
+    const tmp=dest+'.part-'+process.pid+'-'+Date.now();let size=0,done=false;
+    const out=fs.createWriteStream(tmp);
+    const fail=(err)=>{if(done)return;done=true;try{out.destroy();}catch(_){}try{fs.rmSync(tmp,{force:true});}catch(_){}reject(err);};
+    req.on('data',chunk=>{size+=chunk.length;if(size>maxBytes)fail(new Error('Fichier trop volumineux (maximum 30 Mo).'));});
+    req.on('error',fail);out.on('error',fail);
+    out.on('finish',()=>{if(done)return;done=true;try{fs.renameSync(tmp,dest);resolve(size);}catch(e){reject(e);}});
+    req.pipe(out);
+  });
+}
+function finalizeAllpriserUpload(){
+  const missing=ALLPRISER_REQUIRED_DBF.filter(n=>!fs.existsSync(path.join(ALLPRISER_STAGING,n)));
+  if(missing.length)throw new Error('Fichier(s) manquant(s): '+missing.join(', '));
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+  const target=path.join(ALLPRISER_UPDATE_ROOT,'catalog_'+stamp);fs.mkdirSync(target,{recursive:true});
+  for(const n of ALLPRISER_REQUIRED_DBF)fs.copyFileSync(path.join(ALLPRISER_STAGING,n),path.join(target,n));
+  const previous=allpriser.folder();
+  try{
+    const st=allpriser.setFolder(target);
+    if(!st.ok)throw new Error(st.error||'Catalogue DBF invalide.');
+    fs.writeFileSync(path.join(target,'catalog_info.json'),JSON.stringify({importedAt:new Date().toISOString(),source:'ERP upload',count:st.count,revisedDate:st.revisedDate,updateBatch:st.updateBatch},null,2),'utf8');
+    resetAllpriserStaging();
+    return {...st,uploaded:true,catalogFolder:target};
+  }catch(e){
+    try{fs.rmSync(target,{recursive:true,force:true});}catch(_){}
+    try{if(previous&&ALLPRISER_REQUIRED_DBF.every(n=>fs.existsSync(path.join(previous,n))))allpriser.setFolder(previous);}catch(_){}
+    throw e;
+  }
+}
+function finalizeAllpriserDatUpload(){
+  if(!fs.existsSync(ALLPRISER_DAT_STAGING))throw new Error('REDBOOK.DAT manquant.');
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+  const target=path.join(ALLPRISER_UPDATE_ROOT,'catalog_dat_'+stamp);fs.mkdirSync(target,{recursive:true});
+  const targetFile=path.join(target,'REDBOOK.DAT');fs.copyFileSync(ALLPRISER_DAT_STAGING,targetFile);
+  const previousDat=allpriser.datFile(),previousFolder=allpriser.folder();
+  try{
+    const st=allpriser.setDatFile(targetFile);
+    if(!st.ok)throw new Error(st.error||'Catalogue DAT invalide.');
+    fs.writeFileSync(path.join(target,'catalog_info.json'),JSON.stringify({importedAt:new Date().toISOString(),source:'ERP DAT upload',file:'REDBOOK.DAT',count:st.count,revisedDate:st.revisedDate,updateBatch:st.updateBatch},null,2),'utf8');
+    try{fs.rmSync(path.dirname(ALLPRISER_DAT_STAGING),{recursive:true,force:true});}catch(_){}
+    return {...st,uploaded:true,catalogFolder:target,catalogFile:targetFile};
+  }catch(e){
+    try{fs.rmSync(target,{recursive:true,force:true});}catch(_){}
+    try{if(previousDat&&fs.existsSync(previousDat))allpriser.setDatFile(previousDat);else if(previousFolder)allpriser.setFolder(previousFolder);}catch(_){}
+    throw e;
+  }
+}
+
+
 function normText(v=''){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();}
 function normProductDescription(v=''){return normText(v).replace(/[’'`]/g,'').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
-function smartProductTokens(v=''){
+const BUILTIN_PRODUCT_SYNONYMS={
+  elbow:'coude',coude:'coude',ell:'coude',ells:'coude',tee:'tee',te:'tee',trap:'ptrap',siphon:'ptrap',ptrap:'ptrap',
+  coupling:'coupling',couplage:'coupling',manchon:'coupling',reducer:'reducer',reducteur:'reducer',reduction:'reducer',
+  bushing:'bushing',bague:'bushing',ballvalve:'ballvalve',checkvalve:'checkvalve',clapet:'checkvalve',waterheater:'waterheater',
+  sumppump:'sumppump',faucet:'robinet',robinet:'robinet',copper:'cuivre',cuivre:'cuivre',pipe:'tuyau',tuyau:'tuyau',
+  adapter:'adaptateur',adaptor:'adaptateur',adaptateur:'adaptateur',union:'union',nipple:'mamelon',mamelon:'mamelon',
+  wh:'waterheater',bv:'ballvalve',cv:'checkvalve',prv:'prv',lav:'lavabo',lavatory:'lavabo',lavabo:'lavabo',wc:'toilette',
+  toilet:'toilette',toilette:'toilette',dwv:'dwv',abs:'abs',pvc:'pvc',pex:'pex',pexalpex:'pexalpex',cpvc:'cpvc',
+  fip:'fip',mip:'mip',npt:'npt',hub:'hub',nohub:'nohub',cleanout:'cleanout',co:'cleanout',closet:'toilette',
+  speedway:'flexiblehose',flexible:'flexiblehose',flex:'flexiblehose',braided:'flexiblehose',tresse:'flexiblehose',tressee:'flexiblehose',
+  supplyline:'flexiblehose',flexhose:'flexiblehose',hose:'flexiblehose',tresser:'flexiblehose',tressee:'flexiblehose',connector:'connecteur',connecteur:'connecteur',
+  propress:'press',pressfit:'press',press:'press',sweat:'souder',solder:'souder',soldered:'souder',soude:'souder',souder:'souder',
+  female:'femelle',femelle:'femelle',male:'male',crimp:'sertir',serti:'sertir',sertir:'sertir',expansion:'expansion',wirsbo:'uponor',uponor:'uponor',
+  sharkbite:'pushfit',pushfit:'pushfit',push:'pushfit',compression:'compression',flared:'flare',flare:'flare'
+};
+function escapeRegex(v=''){return String(v).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+function editDistanceAtMost2(a,b){if(a===b)return 0;if(!a||!b||Math.abs(a.length-b.length)>2)return 3;let prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const cur=[i];let min=i;for(let j=1;j<=b.length;j++){const v=Math.min(cur[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));cur[j]=v;if(v<min)min=v;}if(min>2)return 3;prev=cur;}return prev[b.length];}
+function tokenNear(a,b){if(a===b)return true;if(!a||!b)return false;if(oneEditApart(a,b))return true;return Math.min(a.length,b.length)>=7&&editDistanceAtMost2(a,b)<=2;}
+function normalizedAliasObject(value){const out={};if(Array.isArray(value)){for(const x of value){const a=normProductDescription(x?.alias||''),t=normProductDescription(x?.target||'');if(a&&t)out[a]=t;}}else if(value&&typeof value==='object'){for(const [k,v] of Object.entries(value)){const a=normProductDescription(k),t=normProductDescription(v);if(a&&t)out[a]=t;}}return out;}
+function applyCustomAliasPhrases(s=''){
+  let out=' '+normProductDescription(s)+' ';
+  const entries=Object.entries(customSearchAliases).filter(([a])=>a.includes(' ')).sort((a,b)=>b[0].length-a[0].length);
+  for(const [alias,target] of entries)out=out.replace(new RegExp(`\\b${escapeRegex(alias).replace(/\\ /g,'\\s+')}\\b`,'g'),` ${target} `);
+  return out.trim();
+}
+function resolveSearchToken(raw,useCustom=true){
+  let t=raw;if(useCustom&&customSearchAliases[t])return smartProductTokens(customSearchAliases[t],false);
+  if(BUILTIN_PRODUCT_SYNONYMS[t])return [BUILTIN_PRODUCT_SYNONYMS[t]];
+  if(t.length>=5){
+    if(useCustom){for(const [a,target] of Object.entries(customSearchAliases)){if(a.includes(' '))continue;if(tokenNear(t,a))return smartProductTokens(target,false);}}
+    for(const a of Object.keys(BUILTIN_PRODUCT_SYNONYMS))if(a.length>=4&&tokenNear(t,a))return [BUILTIN_PRODUCT_SYNONYMS[a]];
+  }
+  return [t];
+}
+function smartProductTokens(v='',useCustom=true){
   let s=normText(v).replace(/[½]/g,' 1/2 ').replace(/[¼]/g,' 1/4 ').replace(/[¾]/g,' 3/4 ');
+  if(useCustom)s=applyCustomAliasPhrases(s);
   s=s.replace(/(\d),(\d)/g,'$1.$2').replace(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/g,' $1 $2 ');
   s=s.replace(/(\d+)\s*[- ]\s*(\d+)\s*\/\s*(\d+)/g,(_,a,b,c)=>` dim${(Number(a)+Number(b)/Number(c)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
   s=s.replace(/\b(\d+)\s*\/\s*(\d+)\b/g,(_,a,b)=>` dim${(Number(a)/Number(b)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
+  s=s.replace(/\bspeed\s*[- ]?\s*way\b/g,' speedway ').replace(/\b(?:raccord|connecteur)\s+flexible\b/g,' flexiblehose ').replace(/\bflexible\s+(?:tresse|tressee|braided)\b/g,' flexiblehose ').replace(/\bbraided\s+(?:hose|connector|line)\b/g,' flexiblehose ').replace(/\bflex\s+(?:hose|connector|line)\b/g,' flexiblehose ').replace(/\bsupply\s+line\b/g,' flexiblehose ');
   s=s.replace(/\bp\s*[- ]?\s*trap\b/g,' ptrap ').replace(/\bball\s+valve\b/g,' ballvalve ').replace(/\bcheck\s+valve\b/g,' checkvalve ').replace(/\bwater\s+heater\b/g,' waterheater ').replace(/\bsump\s+pump\b/g,' sumppump ').replace(/\bchauffe\s*[- ]?eau\b/g,' waterheater ').replace(/\bpompe\s+(?:de\s+)?puisard\b/g,' sumppump ').replace(/\bvalve\s+a\s+bille\b/g,' ballvalve ').replace(/\bpressure\s+(?:reducing\s+)?valve\b/g,' prv ').replace(/\bpressure\s+regulator\b/g,' prv ').replace(/\bwater\s+closet\b/g,' toilette ').replace(/\bclapet\s+(?:de\s+)?non\s*[- ]?retour\b/g,' checkvalve ').replace(/[^a-z0-9.]+/g,' ');
-  const syn={elbow:'coude',coude:'coude',ell:'coude',ells:'coude',tee:'tee',te:'tee',trap:'ptrap',siphon:'ptrap',ptrap:'ptrap',coupling:'coupling',couplage:'coupling',manchon:'coupling',reducer:'reducer',reducteur:'reducer',reduction:'reducer',bushing:'bushing',bague:'bushing',ballvalve:'ballvalve',checkvalve:'checkvalve',clapet:'checkvalve',waterheater:'waterheater',sumppump:'sumppump',faucet:'robinet',robinet:'robinet',copper:'cuivre',cuivre:'cuivre',pipe:'tuyau',tuyau:'tuyau',adapter:'adaptateur',adaptor:'adaptateur',adaptateur:'adaptateur',union:'union',nipple:'mamelon',mamelon:'mamelon',wh:'waterheater',bv:'ballvalve',cv:'checkvalve',prv:'prv',lav:'lavabo',lavatory:'lavabo',lavabo:'lavabo',wc:'toilette',toilet:'toilette',toilette:'toilette',dwv:'dwv',abs:'abs',pvc:'pvc',pex:'pex',pexalpex:'pexalpex',cpvc:'cpvc',fip:'fip',mip:'mip',npt:'npt',hub:'hub',nohub:'nohub',cleanout:'cleanout',co:'cleanout',closet:'toilette'};
   const stop=new Set(['in','inch','inches','po','pouce','pouces','deg','degree','degrees','degre','degres','the','a','de','du','des','et','avec','pour','of']);const out=[];
-  for(const t0 of s.split(/\s+/).filter(Boolean)){if(stop.has(t0))continue;let t=syn[t0]||t0;if(/^\d+(?:\.\d+)?$/.test(t)){const n=Number(t);if(n===90||n===45){out.push(`angle${n}`,'coude');continue;}if(n>0&&n<=24){out.push('dim'+String(n));continue;}}out.push(t);}return [...new Set(out)];
+  for(let t0 of s.split(/\s+/).filter(Boolean)){
+    if(stop.has(t0))continue;if(t0.length>4&&t0.endsWith('s')&&!t0.endsWith('ss'))t0=t0.slice(0,-1);
+    const resolved=resolveSearchToken(t0,useCustom);
+    for(let t of resolved){if(/^\d+(?:\.\d+)?$/.test(t)){const n=Number(t);if(n===90||n===45){out.push(`angle${n}`,'coude');continue;}if(n>0&&n<=36){out.push('dim'+String(n));continue;}}out.push(t);}
+  }
+  return [...new Set(out)];
 }
 function oneEditApart(a,b){if(a===b)return true;if(!a||!b||Math.abs(a.length-b.length)>1)return false;let i=0,j=0,e=0;while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue;}if(++e>1)return false;if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++;}}return e+(i<a.length||j<b.length?1:0)<=1;}
 function smartTokenPresent(t,set){if(set.has(t))return true;if(t.startsWith('dim')||t.startsWith('angle')||t.length<5)return false;for(const p of set)if(p.length>=4&&oneEditApart(t,p))return true;return false;}
-function smartProductScore(product,query){const q=smartProductTokens(query);if(!q.length)return 1;const text=[product.code,product.description,product.supplierCategoryName,product.category,product.brand,product.manufacturer].join(' '),set=new Set(smartProductTokens(text));if(!q.every(t=>smartTokenPresent(t,set)))return -1;const nq=normText(query),nt=normText(text),nc=normText(product.code);let score=0;if(nc&&nq===nc)score+=250;else if(nc&&nc.startsWith(nq))score+=120;if(nq&&nt.includes(nq))score+=60;const type=new Set(['coude','ptrap','tee','coupling','reducer','bushing','ballvalve','checkvalve','waterheater','sumppump','robinet','adaptateur','union','mamelon','lavabo','toilette','prv']);for(const t of q){if(type.has(t))score+=35;else if(['abs','pvc','pex','cpvc','cuivre','pexalpex'].includes(t))score+=24;else if(t.startsWith('dim'))score+=20;else if(t.startsWith('angle'))score+=18;else score+=8;}return score;}
+function smartProductScore(product,query){const q=smartProductTokens(query);if(!q.length)return 1;const text=[product.code,product.description,product.supplierCategoryName,product.category,product.brand,product.manufacturer].join(' '),set=new Set(smartProductTokens(text));if(!q.every(t=>smartTokenPresent(t,set)))return -1;const nq=normText(query),nt=normText(text),nc=normText(product.code);let score=0;if(nc&&nq===nc)score+=250;else if(nc&&nc.startsWith(nq))score+=120;if(nq&&nt.includes(nq))score+=60;const type=new Set(['coude','ptrap','tee','coupling','reducer','bushing','ballvalve','checkvalve','waterheater','sumppump','robinet','adaptateur','union','mamelon','lavabo','toilette','prv','flexiblehose','press','pushfit']);for(const t of q){if(type.has(t))score+=35;else if(['abs','pvc','pex','cpvc','cuivre','pexalpex'].includes(t))score+=24;else if(t.startsWith('dim'))score+=20;else if(t.startsWith('angle'))score+=18;else score+=8;}return score;}
+function fastSmartProductScore(product,query,qTokens){if(!qTokens.length)return 1;const nq=normText(query),nt=product.__search||normText([product.code,product.description,product.supplierCategoryName,product.category,product.brand,product.manufacturer].join(' ')),nc=normText(product.code);let score=0;if(nc&&nq===nc)score+=250;else if(nc&&nc.startsWith(nq))score+=120;if(nq&&nt.includes(nq))score+=60;const type=new Set(['coude','ptrap','tee','coupling','reducer','bushing','ballvalve','checkvalve','waterheater','sumppump','robinet','adaptateur','union','mamelon','lavabo','toilette','prv','flexiblehose','press','pushfit']);for(const t of qTokens){if(type.has(t))score+=35;else if(['abs','pvc','pex','cpvc','cuivre','pexalpex'].includes(t))score+=24;else if(t.startsWith('dim'))score+=20;else if(t.startsWith('angle'))score+=18;else score+=8;}return score;}
 function num(v,def=0){const raw=String(v??'').trim();if(!raw)return Number(def||0);let s=raw.replace(/\s/g,'').replace(/[$%]/g,'');if(s.includes(',')&&s.includes('.')){if(s.lastIndexOf(',')>s.lastIndexOf('.'))s=s.replace(/\./g,'').replace(',','.');else s=s.replace(/,/g,'');}else if(s.includes(','))s=s.replace(',','.');const n=Number(s.replace(/[^0-9.\-]/g,''));return Number.isFinite(n)?n:Number(def||0);}
 function normalizeProduct(p={},existing=null){
   const code=String(p.code||p.sku||p.item||'').trim();
@@ -72,15 +177,39 @@ function normalizeProduct(p={},existing=null){
   };
 }
 function rebuildProductIndexes(){
-  productByIdMap=new Map();productByCodeMap=new Map();
+  productByIdMap=new Map();productByCodeMap=new Map();productTokenIndex=new Map();productTokenLengthBuckets=new Map();productSearchCache.clear();
   let active=0,warehouseUnits=0,low=0,out=0,onOrder=0,costValue=0,saleValue=0;const categorySale={},categoryCount={};
   for(const p of productStore){
-    productByIdMap.set(p.id,p);if(p.code)productByCodeMap.set(String(p.code).toLowerCase(),p);try{Object.defineProperty(p,'__search',{value:normText([p.code,p.description,p.supplierCategoryName,p.category].join(' ')),writable:true,configurable:true,enumerable:false});}catch(_){p.__search=normText([p.code,p.description,p.supplierCategoryName,p.category].join(' '));}
+    productByIdMap.set(p.id,p);if(p.code)productByCodeMap.set(String(p.code).toLowerCase(),p);
+    const searchText=[p.code,p.description,p.supplierCategoryName,p.category,p.brand,p.manufacturer].join(' '),tokens=smartProductTokens(searchText);
+    try{Object.defineProperty(p,'__search',{value:normText(searchText),writable:true,configurable:true,enumerable:false});Object.defineProperty(p,'__tokens',{value:tokens,writable:true,configurable:true,enumerable:false});}catch(_){p.__search=normText(searchText);p.__tokens=tokens;}
+    for(const token of tokens){let ids=productTokenIndex.get(token);if(!ids){ids=new Set();productTokenIndex.set(token,ids);}ids.add(p.id);}
     if(p.active===false)continue;active++;categoryCount[String(p.supplierCategoryId||'')]=(categoryCount[String(p.supplierCategoryId||'')]||0)+1;const q=num(p.warehouseQty),m=num(p.minQty),cost=num(p.costPrice),list=num(p.listPrice);
     warehouseUnits+=q;onOrder+=num(p.onOrderQty);costValue+=q*cost;saleValue+=q*list;{const catName=p.supplierCategoryName||p.category||'À classer';categorySale[catName]=(categorySale[catName]||0)+q*list;}
     if(q===0)out++;else if(q<=m)low++;
   }
+  productSearchVocabulary=[...productTokenIndex.keys()];for(const word of productSearchVocabulary){const n=word.length;let bucket=productTokenLengthBuckets.get(n);if(!bucket){bucket=[];productTokenLengthBuckets.set(n,bucket);}bucket.push(word);}
   productStatsCache={total:productStore.length,active,warehouseUnits,low,out,onOrder,lowIncludingOut:low+out,costValue,saleValue,categorySale,categoryCount,updatedAt:new Date().toISOString()};
+}
+function fastProductCandidates(query){
+  const tokens=smartProductTokens(query);if(!tokens.length)return [];
+  const sets=[];
+  for(const token of tokens){
+    let ids=productTokenIndex.get(token);
+    if((!ids||!ids.size)&&token.length>=5&&!token.startsWith('dim')&&!token.startsWith('angle')){
+      const fuzzy=new Set(),words=[];for(const n of [token.length-1,token.length,token.length+1])words.push(...(productTokenLengthBuckets.get(n)||[]));
+      for(const word of words){
+        if(word.length<4)continue;if(tokenNear(token,word)){for(const id of productTokenIndex.get(word)||[])fuzzy.add(id);}
+        if(fuzzy.size>5000)break;
+      }
+      ids=fuzzy;
+    }
+    if(!ids||!ids.size)return [];
+    sets.push(ids);
+  }
+  sets.sort((a,b)=>a.size-b.size);const rows=[];
+  outer: for(const id of sets[0]){for(let i=1;i<sets.length;i++)if(!sets[i].has(id))continue outer;const p=productByIdMap.get(id);if(p)rows.push(p);}
+  return rows;
 }
 function migratePreviousProductStoreIfNeeded(){
   // Facilite le passage V31/V32/V33/V34/V35/V36/V37 -> V38 : si ce dossier est vide, récupère automatiquement
@@ -114,14 +243,22 @@ function saveProductStore(){const tmp=PRODUCTS_STORE+'.tmp';fs.writeFileSync(tmp
 function productQuery(params){
   const q=normText(params.get('q')||params.get('query')||''),filter=params.get('filter')||'all';
   const offset=Math.max(0,Number(params.get('offset')||0)),limit=Math.max(1,Math.min(500,Number(params.get('limit')||48)));
-  const activeOnly=params.get('activeOnly')==='1',supplierCategoryId=String(params.get('supplierCategoryId')||'');let rows=[];
-  for(const p of productStore){if(activeOnly&&p.active===false)continue;if(supplierCategoryId&&String(p.supplierCategoryId||'')!==supplierCategoryId)continue;const qty=num(p.warehouseQty),min=num(p.minQty);
+  const activeOnly=params.get('activeOnly')==='1',supplierCategoryId=String(params.get('supplierCategoryId')||'');
+  const cacheKey=q?`${q}|${filter}|${activeOnly?'1':'0'}|${supplierCategoryId}|${offset}|${limit}`:'';
+  if(cacheKey&&productSearchCache.has(cacheKey))return productSearchCache.get(cacheKey);
+  let rows=[];const qTokens=q?smartProductTokens(q):[],candidateRows=q?fastProductCandidates(q):productStore,source=q?[...candidateRows]:productStore;
+  const learnedKey=q?normProductDescription(q):'',learned=learnedKey&&learnedSearchBoosts[learnedKey]?learnedSearchBoosts[learnedKey]:{};
+  if(q&&learned&&typeof learned==='object'){const seen=new Set(source.map(p=>p.id));for(const id of Object.keys(learned)){const p=productByIdMap.get(String(id));if(p&&!seen.has(p.id)){source.push(p);seen.add(p.id);}}}
+  for(const p of source){if(activeOnly&&p.active===false)continue;if(supplierCategoryId&&String(p.supplierCategoryId||'')!==supplierCategoryId)continue;const qty=num(p.warehouseQty),min=num(p.minQty);
     if(filter==='low'&&!(p.active!==false&&qty>0&&qty<=min))continue;if(filter==='out'&&!(p.active!==false&&qty===0))continue;if(filter==='onorder'&&!(num(p.onOrderQty)>0))continue;
-    const score=q?smartProductScore(p,q):0;if(q&&score<0)continue;rows.push({p,score});
+    let score=q?fastSmartProductScore(p,q,qTokens):0;if(q&&learned&&learned[p.id])score+=Math.min(120,Number(learned[p.id]||0)*18);rows.push({p,score});
   }
   if(q)rows.sort((a,b)=>b.score-a.score||String(a.p.description||'').localeCompare(String(b.p.description||''),'fr'));
-  return {total:rows.length,offset,limit,items:rows.slice(offset,offset+limit).map(x=>x.p),stats:productStatsCache};
+  const result={total:rows.length,offset,limit,items:rows.slice(offset,offset+limit).map(x=>x.p),stats:productStatsCache};
+  if(cacheKey){productSearchCache.set(cacheKey,result);if(productSearchCache.size>120)productSearchCache.delete(productSearchCache.keys().next().value);}
+  return result;
 }
+function lightweightProduct(p){return {id:p.id,code:p.code||'',description:p.description||'',category:p.category||'',supplierCategoryName:p.supplierCategoryName||'',warehouseQty:num(p.warehouseQty),listPrice:num(p.listPrice),costPrice:num(p.costPrice),perras1Price:num(p.perras1Price),active:p.active!==false};}
 loadProductStore();
 
 function json(res, status, body){
@@ -375,8 +512,25 @@ const server=http.createServer(async (req,res)=>{
     }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
 
+  /* ===================== Recherche Perras avancée V39.7 ===================== */
+  if(req.method==='GET' && url.pathname==='/api/search-aliases'){
+    return json(res,200,{ok:true,aliases:Object.entries(customSearchAliases).map(([alias,target])=>({alias,target})).sort((a,b)=>a.alias.localeCompare(b.alias,'fr')),builtins:['speedway → flexible / flexible tressé','p-trap ↔ siphon','90 ↔ coude','ball valve ↔ valve à bille','coupling ↔ manchon']});
+  }
+  if(req.method==='POST' && url.pathname==='/api/search-aliases'){
+    if(onlineUser.role!=='admin')return json(res,403,{ok:false,error:'Admin seulement'});
+    try{const body=await parseBody(req),alias=normProductDescription(body.alias||''),target=normProductDescription(body.target||'');if(alias.length<2||target.length<2)return json(res,400,{ok:false,error:'Alias et équivalent requis'});customSearchAliases[alias]=target;await online.setState('searchAliases',Object.entries(customSearchAliases).map(([a,t])=>({alias:a,target:t})),onlineUser);rebuildProductIndexes();return json(res,200,{ok:true,aliases:Object.entries(customSearchAliases).map(([a,t])=>({alias:a,target:t}))});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/search-aliases/delete'){
+    if(onlineUser.role!=='admin')return json(res,403,{ok:false,error:'Admin seulement'});
+    try{const body=await parseBody(req),alias=normProductDescription(body.alias||'');delete customSearchAliases[alias];await online.setState('searchAliases',Object.entries(customSearchAliases).map(([a,t])=>({alias:a,target:t})),onlineUser);rebuildProductIndexes();return json(res,200,{ok:true});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/search-learning'){
+    try{const body=await parseBody(req),query=normProductDescription(body.query||''),productId=String(body.productId||'');if(query.length<2||!productByIdMap.has(productId))return json(res,200,{ok:true});const bucket=learnedSearchBoosts[query]&&typeof learnedSearchBoosts[query]==='object'?learnedSearchBoosts[query]:{};bucket[productId]=Math.min(20,Number(bucket[productId]||0)+1);learnedSearchBoosts[query]=bucket;const keys=Object.keys(learnedSearchBoosts);if(keys.length>350)delete learnedSearchBoosts[keys[0]];await online.setState('searchLearning',learnedSearchBoosts,{id:'system',role:'admin'});productSearchCache.clear();return json(res,200,{ok:true});}catch(e){return json(res,200,{ok:true});}
+  }
+
   /* ===================== Catalogue produits persistant ===================== */
   if(req.method==='GET' && url.pathname==='/api/products/stats') return json(res,200,{ok:true,stats:productStatsCache});
+  if(req.method==='GET' && url.pathname==='/api/products/search'){const q=String(url.searchParams.get('q')||'').trim();if(q.length<2)return json(res,200,{ok:true,total:0,items:[]});const params=new URLSearchParams(url.searchParams);params.set('activeOnly','1');params.set('offset','0');params.set('limit',String(Math.max(1,Math.min(40,Number(url.searchParams.get('limit')||20)))));const d=productQuery(params);return json(res,200,{ok:true,total:d.total,items:d.items.map(lightweightProduct)});}
   if(req.method==='GET' && url.pathname==='/api/products') return json(res,200,{ok:true,...productQuery(url.searchParams)});
   if(req.method==='POST' && url.pathname==='/api/products/category-sync'){
     try{const {categoryId,name}=await parseBody(req);const cid=String(categoryId||''),label=String(name||'').trim();if(!cid||!label)return json(res,400,{error:'Catégorie invalide'});let changed=0;for(const p of productStore){if(String(p.supplierCategoryId||'')===cid){p.category=label;p.supplierCategoryName=label;p.updatedAt=new Date().toISOString();changed++;}}if(changed)saveProductStore();return json(res,200,{ok:true,changed,stats:productStatsCache});}catch(e){return json(res,400,{error:String(e.message||e)});}
@@ -435,6 +589,66 @@ const server=http.createServer(async (req,res)=>{
     productStore=[...productImportSession.map.values()];
     const result={mode:productImportSession.mode,received:productImportSession.received,added:productImportSession.added,updated:productImportSession.updated,priceUpdated:productImportSession.priceUpdated,notFound:productImportSession.notFound,total:productStore.length};
     productImportSession=null;saveProductStore();return json(res,200,{ok:true,...result,stats:productStatsCache});
+  }
+
+
+  // V39.8 — Allpriser REDBOOK.DAT restauré. Méthode principale pour la mise à jour des Prix Liste.
+  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-dat'){
+    try{
+      fs.rmSync(path.dirname(ALLPRISER_DAT_STAGING),{recursive:true,force:true});
+      const bytes=await receiveRawFile(req,ALLPRISER_DAT_STAGING,30*1024*1024);
+      const result=finalizeAllpriserDatUpload();
+      return json(res,200,{...result,bytes});
+    }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-reset'){
+    try{resetAllpriserStaging();return json(res,200,{ok:true});}catch(e){return json(res,500,{ok:false,error:String(e.message||e)});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-file'){
+    const name=String(url.searchParams.get('name')||'');
+    const canonical=ALLPRISER_REQUIRED_DBF.find(n=>n.toLowerCase()===name.toLowerCase());
+    if(!canonical)return json(res,400,{ok:false,error:'Fichier DBF non permis. Utilisez Red__01.dbf, Red__04.dbf ou Red__05.dbf.'});
+    try{const bytes=await receiveRawFile(req,path.join(ALLPRISER_STAGING,canonical));return json(res,200,{ok:true,name:canonical,bytes});}
+    catch(e){return json(res,400,{ok:false,error:String(e.message||e),name:canonical});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/allpriser/upload-finalize'){
+    try{return json(res,200,finalizeAllpriserUpload());}
+    catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+  if(req.method==='GET' && url.pathname==='/api/allpriser/status'){
+    return json(res,200,allpriser.status());
+  }
+  if(req.method==='POST' && url.pathname==='/api/allpriser/config'){
+    try{const body=await parseBody(req);return json(res,200,allpriser.setFolder(body.path));}
+    catch(e){return json(res,400,{ok:false,error:String(e.message||e),path:allpriser.folder(),candidates:allpriser.candidateFolders()});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/allpriser/detect'){
+    try{return json(res,200,allpriser.detectFolder());}
+    catch(e){return json(res,500,{ok:false,error:String(e.message||e),path:allpriser.folder()});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/allpriser/price-analysis'){
+    try{
+      const body=await parseBody(req),thresholdPct=Math.max(0,Number(body.thresholdPct)||30);
+      const result=allpriser.compareByDescription(productStore.filter(p=>p.active!==false),thresholdPct);
+      return json(res,200,result);
+    }catch(e){return json(res,503,{ok:false,error:String(e.message||e),path:allpriser.folder()});}
+  }
+  if(req.method==='POST' && url.pathname==='/api/allpriser/price-apply'){
+    try{
+      const body=await parseBody(req),thresholdPct=Math.max(0,Number(body.thresholdPct)||30),ids=new Set((Array.isArray(body.ids)?body.ids:[]).map(String));
+      if(!ids.size)return json(res,400,{ok:false,error:'Aucune mise à jour sélectionnée.'});
+      const fresh=allpriser.compareByDescription(productStore.filter(p=>p.active!==false),thresholdPct),byId=new Map((fresh.changes||[]).map(c=>[String(c.id),c]));
+      let updated=0,reviewUpdated=0;
+      for(const id of ids){
+        const c=byId.get(id),existing=productByIdMap.get(id);if(!c||!existing||existing.active===false)continue;
+        const patch={...existing,listPrice:Number(c.newPrice||0),source:existing.source||'winpriser',allpriserNctlg:c.allpriserNctlg,allpriserSibca:c.allpriserSibca||'',allpriserRevisedDate:c.revisedDate||'',allpriserUpdateBatch:c.updateBatch||'',allpriserLastSync:new Date().toISOString(),allpriserMatchMethod:c.matchMethod||'Description'};
+        // Allpriser modifie UNIQUEMENT le Prix Liste.
+        const normalized=normalizeProduct(patch,existing),i=productStore.findIndex(x=>x.id===existing.id);
+        if(i>=0){productStore[i]=normalized;updated++;if(c.needsReview)reviewUpdated++;}
+      }
+      saveProductStore();
+      return json(res,200,{ok:true,updated,reviewUpdated,total:productStore.length,stats:productStatsCache});
+    }catch(e){return json(res,503,{ok:false,error:String(e.message||e)});}
   }
 
   // V33 — Analyse puis mise à jour des Prix Liste Winpriser par DESCRIPTION.
@@ -556,6 +770,8 @@ const server=http.createServer(async (req,res)=>{
 
 async function startV38Online(){
   await online.init();
+  try{const rows=await online.getStateAll(),a=rows.find(x=>x.key==='searchAliases'),l=rows.find(x=>x.key==='searchLearning');customSearchAliases=normalizedAliasObject(a?.value||[]);learnedSearchBoosts=(l?.value&&typeof l.value==='object'&&!Array.isArray(l.value))?l.value:{};}catch(_){customSearchAliases={};learnedSearchBoosts={};}
+  rebuildProductIndexes();
   const cloudProducts=await online.loadProducts();
   if(Array.isArray(cloudProducts)&&cloudProducts.length){productStore=cloudProducts.map(x=>normalizeProduct(x,x));rebuildProductIndexes();}
   else await online.saveProducts(productStore);
