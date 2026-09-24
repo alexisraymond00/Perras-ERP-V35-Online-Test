@@ -254,3 +254,54 @@ a{text-decoration:none;color:inherit}
 /* ===== V39.7 — Dictionnaire plomberie Perras ===== */
 .v397-alias-form{display:grid;grid-template-columns:minmax(220px,1fr) minmax(260px,1.2fr) auto;gap:12px;align-items:end;margin:16px 0}.v397-alias-form .field{margin:0}.v397-alias-list{display:grid;gap:8px;max-height:420px;overflow:auto}.v397-alias-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 12px;border:1px solid #dce6ee;border-radius:10px;background:#fff}.v397-alias-row span{display:flex;align-items:center;gap:10px;min-width:0}.v397-alias-row strong{color:#123f68}.v397-alias-row small{color:#71859a;font-weight:700}.request-product-card-v396 .card-head h3::after{content:' · Recherche Perras';font-size:11px;font-weight:800;color:#0874d8;margin-left:7px}.v391-search-count::after{content:' · synonymes + fautes + dimensions';color:#6f8394;font-weight:600}.v395-po-tip strong:first-child::after{content:' · speedway 3/8 1/2 20';font-weight:800;color:#0b6fcf}
 @media(max-width:760px){.v397-alias-form{grid-template-columns:1fr}.v397-alias-row{align-items:flex-start}.v397-alias-row span{flex-direction:column;align-items:flex-start;gap:2px}}
+
+/* ===== V39.9 — Produits Facture/BT propres + doublons ===== */
+.v399-material-row{display:grid!important;grid-template-columns:minmax(0,1fr) 92px 145px 115px 44px;gap:12px;align-items:end;padding:14px 0;border-bottom:1px solid #e6edf3}
+.v399-material-main{min-width:0}
+.v399-material-topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px}
+.v399-stock-note{font-size:10px;color:#6f8395;white-space:nowrap}
+.v399-product-search{width:100%}
+.v399-product-search>input,.v399-material-manual>input{width:100%!important;min-height:46px!important;font-size:14px!important;padding:0 13px!important;border:1px solid #bfd0df!important;border-radius:10px!important;background:#fff!important}
+.v399-num label,.v399-total label{display:block;font-size:9px;font-weight:900;text-transform:uppercase;color:#708698;margin-bottom:6px}
+.v399-num input{width:100%;min-height:46px!important;border-radius:10px!important}
+.v399-total strong{min-height:46px;display:flex;align-items:center;justify-content:flex-end;font-size:16px;color:#173b57}
+.v399-remove{margin-bottom:2px;width:40px;height:40px;display:grid;place-items:center;padding:0}
+.v392-material-card .card-body{padding:14px 18px 18px}
+.v392-material-head{grid-template-columns:minmax(0,1fr) 92px 145px 115px 44px!important;gap:12px!important;padding:0 0 7px!important}
+.v392-material-head span:first-child::after{content:''!important}
+.v39-material-summary.v392-material-summary{margin-top:14px;max-width:360px;background:#f3f8fc;border-color:#d8e5ee}
+.v39-product-search>[data-v39-results]{left:0;right:0;min-width:min(760px,90vw);max-height:390px}
+.v39-product-hit{grid-template-columns:110px minmax(240px,1fr) 105px 105px;padding:11px 12px}
+.v391-search-count{padding:8px 11px;font-size:10px;font-weight:800;color:#62798c;background:#f7fafc;border-bottom:1px solid #e5edf3}
+.v399-duplicate-list{display:grid;gap:10px;max-height:62vh;overflow:auto;margin-top:14px}
+.v399-duplicate-group{border:1px solid #dce6ee;border-radius:11px;background:#fff;overflow:hidden}
+.v399-duplicate-title{padding:8px 12px;background:#fff7e6;color:#8b5b00;font-size:11px;font-weight:900;text-transform:uppercase}
+.v399-duplicate-item{display:grid;grid-template-columns:120px minmax(250px,1fr) 180px;gap:10px;padding:9px 12px;border-top:1px solid #edf2f6;align-items:center}
+.v399-duplicate-item strong{color:#0874d8}.v399-duplicate-item small{color:#74899b}
+@media(max-width:900px){.v399-material-row{grid-template-columns:1fr 1fr}.v399-material-main{grid-column:1/-1}.v399-total{grid-column:1}.v399-remove{grid-column:2;justify-self:end}.v392-material-head{display:none!important}.v399-material-topline{align-items:flex-start;flex-direction:column}.v399-stock-note{white-space:normal}.v39-product-search>[data-v39-results]{min-width:100%}.v399-duplicate-item{grid-template-columns:1fr}.v39-product-hit{grid-template-columns:90px 1fr}.v39-hit-stock,.v39-hit-price{grid-column:2;text-align:left}}
+
+
+/* ===== V40.0 — Facture/BT réellement compact + recherche terrain ===== */
+.v392-material-head{display:none!important}
+.v392-material-card .card-body{padding:16px 18px 18px!important}
+#serviceMaterialsHostV39{display:grid;gap:0}
+.v400-material-row{display:grid!important;grid-template-columns:minmax(0,1fr) 92px 155px 125px 44px!important;gap:12px!important;align-items:end!important;padding:14px 0!important;border-bottom:1px solid #e4ebf1!important;background:#fff!important}
+.v400-material-row:last-child{border-bottom:0!important}
+.v400-material-main{min-width:0!important;width:100%!important}
+.v400-product-label{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px;color:#405d74;font-size:11px}
+.v400-product-label>strong{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.35px}
+.v400-product-label .v395-material-mode{margin:0!important}
+.v400-product-search{position:relative!important;width:100%!important;min-width:0!important}
+.v400-product-search>input{display:block!important;width:100%!important;box-sizing:border-box!important;min-height:48px!important;padding:0 14px 0 39px!important;border:1.5px solid #b9ccdc!important;border-radius:10px!important;background:#fff!important;font-size:15px!important;font-weight:650!important;color:#17344b!important}
+.v400-product-search>input:focus{border-color:#1784ee!important;box-shadow:0 0 0 3px rgba(23,132,238,.12)!important;outline:none!important}
+.v400-search-icon{position:absolute;left:14px;top:12px;z-index:2;color:#55758e;font-size:20px;line-height:1;pointer-events:none}
+.v400-stock-note{min-height:17px;margin-top:5px;font-size:10px;color:#6f8395}
+.v400-field label,.v400-total label{display:block;margin:0 0 6px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.35px;color:#708698}
+.v400-field input{width:100%!important;box-sizing:border-box!important;min-height:48px!important;border:1px solid #c6d5e2!important;border-radius:10px!important;font-size:14px!important;padding:0 10px!important}
+.v400-total strong{min-height:48px;display:flex;align-items:center;justify-content:flex-end;font-size:16px;color:#173b57;white-space:nowrap;padding-right:4px}
+.v400-remove{width:42px!important;height:42px!important;padding:0!important;display:grid!important;place-items:center!important;margin-bottom:3px!important;border-radius:9px!important}
+.v400-product-search>[data-v39-results]{left:0!important;right:auto!important;width:min(880px,calc(96vw - 90px))!important;max-width:880px!important;min-width:100%!important;max-height:430px!important}
+.v400-product-search .v39-product-hit{grid-template-columns:120px minmax(260px,1fr) 120px 110px!important;padding:12px 13px!important}
+.v39-material-summary.v392-material-summary{margin-top:14px!important;margin-left:auto!important;max-width:360px!important;background:#f2f7fb!important;border:1px solid #d8e5ee!important;color:#28485f!important}
+@media(max-width:1050px){.v400-material-row{grid-template-columns:minmax(0,1fr) 82px 130px 105px 42px!important}.v400-product-search>[data-v39-results]{width:min(760px,92vw)!important}}
+@media(max-width:760px){.v400-material-row{grid-template-columns:1fr 1fr!important;gap:10px!important}.v400-material-main{grid-column:1/-1!important}.v400-total{grid-column:1!important}.v400-remove{grid-column:2!important;justify-self:end!important}.v400-product-label{align-items:flex-start;flex-direction:column}.v400-product-search>[data-v39-results]{width:100%!important}.v400-product-search .v39-product-hit{grid-template-columns:85px 1fr!important}.v400-product-search .v39-hit-stock,.v400-product-search .v39-hit-price{grid-column:2!important;text-align:left!important}}
