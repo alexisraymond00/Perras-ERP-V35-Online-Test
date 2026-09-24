@@ -109,8 +109,8 @@ const BUILTIN_PRODUCT_SYNONYMS={
   wh:'waterheater',bv:'ballvalve',cv:'checkvalve',prv:'prv',lav:'lavabo',lavatory:'lavabo',lavabo:'lavabo',wc:'toilette',
   toilet:'toilette',toilette:'toilette',dwv:'dwv',abs:'abs',pvc:'pvc',pex:'pex',pexalpex:'pexalpex',cpvc:'cpvc',
   fip:'fip',mip:'mip',npt:'npt',hub:'hub',nohub:'nohub',cleanout:'cleanout',co:'cleanout',closet:'toilette',
-  speedway:'flexiblehose',flexible:'flexiblehose',flex:'flexiblehose',braided:'flexiblehose',tresse:'flexiblehose',tressee:'flexiblehose',
-  supplyline:'flexiblehose',flexhose:'flexiblehose',hose:'flexiblehose',tresser:'flexiblehose',tressee:'flexiblehose',connector:'connecteur',connecteur:'connecteur',
+  speedway:'flexiblehose',speedways:'flexiblehose',spedway:'flexiblehose',speedwai:'flexiblehose',flexible:'flexiblehose',flex:'flexiblehose',braided:'flexiblehose',braid:'flexiblehose',tresse:'flexiblehose',tressee:'flexiblehose',tresser:'flexiblehose',
+  supplyline:'flexiblehose',flexhose:'flexiblehose',hose:'flexiblehose',hoses:'flexiblehose',host:'flexiblehose',hse:'flexiblehose',flexconn:'flexiblehose',flexconnector:'flexiblehose',connector:'connecteur',connecteur:'connecteur',
   propress:'press',pressfit:'press',press:'press',sweat:'souder',solder:'souder',soldered:'souder',soude:'souder',souder:'souder',
   female:'femelle',femelle:'femelle',male:'male',crimp:'sertir',serti:'sertir',sertir:'sertir',expansion:'expansion',wirsbo:'uponor',uponor:'uponor',
   sharkbite:'pushfit',pushfit:'pushfit',push:'pushfit',compression:'compression',flared:'flare',flare:'flare'
@@ -120,7 +120,8 @@ function editDistanceAtMost2(a,b){if(a===b)return 0;if(!a||!b||Math.abs(a.length
 function tokenNear(a,b){if(a===b)return true;if(!a||!b)return false;if(oneEditApart(a,b))return true;return Math.min(a.length,b.length)>=7&&editDistanceAtMost2(a,b)<=2;}
 function normalizedAliasObject(value){const out={};if(Array.isArray(value)){for(const x of value){const a=normProductDescription(x?.alias||''),t=normProductDescription(x?.target||'');if(a&&t)out[a]=t;}}else if(value&&typeof value==='object'){for(const [k,v] of Object.entries(value)){const a=normProductDescription(k),t=normProductDescription(v);if(a&&t)out[a]=t;}}return out;}
 function applyCustomAliasPhrases(s=''){
-  let out=' '+normProductDescription(s)+' ';
+  // Important: conserver /, . et - ici. Les retirer avant l'analyse cassait 1/2, 1.5 et 1-1/2.
+  let out=' '+normText(s)+' ';
   const entries=Object.entries(customSearchAliases).filter(([a])=>a.includes(' ')).sort((a,b)=>b[0].length-a[0].length);
   for(const [alias,target] of entries)out=out.replace(new RegExp(`\\b${escapeRegex(alias).replace(/\\ /g,'\\s+')}\\b`,'g'),` ${target} `);
   return out.trim();
@@ -138,9 +139,17 @@ function smartProductTokens(v='',useCustom=true){
   let s=normText(v).replace(/[½]/g,' 1/2 ').replace(/[¼]/g,' 1/4 ').replace(/[¾]/g,' 3/4 ');
   if(useCustom)s=applyCustomAliasPhrases(s);
   s=s.replace(/(\d),(\d)/g,'$1.$2').replace(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/g,' $1 $2 ');
-  s=s.replace(/(\d+)\s*[- ]\s*(\d+)\s*\/\s*(\d+)/g,(_,a,b,c)=>` dim${(Number(a)+Number(b)/Number(c)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
+  s=s.replace(/(^|[^\/\d])(\d+)\s*(?:-|\s)\s*(\d+)\s*\/\s*(\d+)(?!\d)/g,(_,pre,a,b,c)=>`${pre} dim${(Number(a)+Number(b)/Number(c)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
   s=s.replace(/\b(\d+)\s*\/\s*(\d+)\b/g,(_,a,b)=>` dim${(Number(a)/Number(b)).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} `);
-  s=s.replace(/\bspeed\s*[- ]?\s*way\b/g,' speedway ').replace(/\b(?:raccord|connecteur)\s+flexible\b/g,' flexiblehose ').replace(/\bflexible\s+(?:tresse|tressee|braided)\b/g,' flexiblehose ').replace(/\bbraided\s+(?:hose|connector|line)\b/g,' flexiblehose ').replace(/\bflex\s+(?:hose|connector|line)\b/g,' flexiblehose ').replace(/\bsupply\s+line\b/g,' flexiblehose ');
+  s=s.replace(/\bspeed\s*[- ]?\s*way\b/g,' speedway ')
+    .replace(/\b(?:raccord|connecteur|connector)\s+(?:flexible|flex|tresse|tressee|braided)\b/g,' flexiblehose ')
+    .replace(/\b(?:flexible|flex)\s+(?:tresse|tressee|braided|hose|connector|connecteur|line)\b/g,' flexiblehose ')
+    .replace(/\bbraided\s+(?:hose|connector|connecteur|line|supply)\b/g,' flexiblehose ')
+    .replace(/\b(?:hose|host)\s+(?:flexible|braided|tresse|tressee)\b/g,' flexiblehose ')
+    .replace(/\b(?:supply|supplyline)\s+(?:line|hose|connector|connecteur)\b/g,' flexiblehose ')
+    .replace(/\b(?:toilet|toilette|closet|lavatory|lavabo|basin|faucet|robinet)\s+(?:supply|connector|connecteur|hose|line)\b/g,' flexiblehose ')
+    .replace(/\b(?:ss|stainless|inox)\s+(?:braided\s+)?(?:hose|connector|connecteur|supply)\b/g,' flexiblehose ')
+    .replace(/\bsupply\s+line\b/g,' flexiblehose ');
   s=s.replace(/\bp\s*[- ]?\s*trap\b/g,' ptrap ').replace(/\bball\s+valve\b/g,' ballvalve ').replace(/\bcheck\s+valve\b/g,' checkvalve ').replace(/\bwater\s+heater\b/g,' waterheater ').replace(/\bsump\s+pump\b/g,' sumppump ').replace(/\bchauffe\s*[- ]?eau\b/g,' waterheater ').replace(/\bpompe\s+(?:de\s+)?puisard\b/g,' sumppump ').replace(/\bvalve\s+a\s+bille\b/g,' ballvalve ').replace(/\bpressure\s+(?:reducing\s+)?valve\b/g,' prv ').replace(/\bpressure\s+regulator\b/g,' prv ').replace(/\bwater\s+closet\b/g,' toilette ').replace(/\bclapet\s+(?:de\s+)?non\s*[- ]?retour\b/g,' checkvalve ').replace(/[^a-z0-9.]+/g,' ');
   const stop=new Set(['in','inch','inches','po','pouce','pouces','deg','degree','degrees','degre','degres','the','a','de','du','des','et','avec','pour','of']);const out=[];
   for(let t0 of s.split(/\s+/).filter(Boolean)){
@@ -151,8 +160,10 @@ function smartProductTokens(v='',useCustom=true){
   return [...new Set(out)];
 }
 function oneEditApart(a,b){if(a===b)return true;if(!a||!b||Math.abs(a.length-b.length)>1)return false;let i=0,j=0,e=0;while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue;}if(++e>1)return false;if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++;}}return e+(i<a.length||j<b.length?1:0)<=1;}
-function smartTokenPresent(t,set){if(set.has(t))return true;if(t.startsWith('dim')||t.startsWith('angle')||t.length<5)return false;for(const p of set)if(p.length>=4&&oneEditApart(t,p))return true;return false;}
-function smartProductScore(product,query){const q=smartProductTokens(query);if(!q.length)return 1;const text=[product.code,product.description,product.supplierCategoryName,product.category,product.brand,product.manufacturer].join(' '),set=new Set(smartProductTokens(text));if(!q.every(t=>smartTokenPresent(t,set)))return -1;const nq=normText(query),nt=normText(text),nc=normText(product.code);let score=0;if(nc&&nq===nc)score+=250;else if(nc&&nc.startsWith(nq))score+=120;if(nq&&nt.includes(nq))score+=60;const type=new Set(['coude','ptrap','tee','coupling','reducer','bushing','ballvalve','checkvalve','waterheater','sumppump','robinet','adaptateur','union','mamelon','lavabo','toilette','prv','flexiblehose','press','pushfit']);for(const t of q){if(type.has(t))score+=35;else if(['abs','pvc','pex','cpvc','cuivre','pexalpex'].includes(t))score+=24;else if(t.startsWith('dim'))score+=20;else if(t.startsWith('angle'))score+=18;else score+=8;}return score;}
+function rawHasDimension(raw,t){if(!t.startsWith('dim'))return false;const wanted=Number(t.slice(3));if(!Number.isFinite(wanted))return false;const src=String(raw||'').normalize('NFKC').replace(/,/g,'.').replace(/[½]/g,' 1/2 ').replace(/[¼]/g,' 1/4 ').replace(/[¾]/g,' 3/4 ');const vals=[];src.replace(/(\d+)\s*[- ]\s*(\d+)\s*\/\s*(\d+)/g,(_,a,b,c)=>{vals.push(Number(a)+Number(b)/Number(c));return _;});src.replace(/\b(\d+)\s*\/\s*(\d+)\b/g,(_,a,b)=>{vals.push(Number(a)/Number(b));return _;});src.replace(/(?:^|[^0-9])(\d*\.\d+|\d+)(?=$|[^0-9])/g,(_,a)=>{const n=Number(a);if(n>0&&n<=36)vals.push(n);return _;});return vals.some(n=>Math.abs(n-wanted)<0.001);}
+function rawHasFlexibleConnector(raw){return /speed\s*[- ]?\s*way|spedway|speedwai|\bflex(?:ible)?\b|\bhose?s?\b|\bhost\b|braid|tress|supply\s*(?:line|hose|connector)?|(?:toilet|toilette|closet|lavatory|lavabo|basin|faucet|robinet).{0,20}(?:supply|connector|connecteur|hose|line)|(?:ss|stainless|inox).{0,12}(?:hose|connector|connecteur|supply)/i.test(String(raw||''));}
+function smartTokenPresent(t,set,raw=''){if(set.has(t))return true;if(t==='flexiblehose'&&rawHasFlexibleConnector(raw))return true;if(t.startsWith('dim'))return rawHasDimension(raw,t);if(t.startsWith('angle')||t.length<5)return false;for(const p of set)if(p.length>=4&&oneEditApart(t,p))return true;return false;}
+function smartProductScore(product,query){const q=smartProductTokens(query);if(!q.length)return 1;const text=[product.code,product.description,product.supplierCategoryName,product.category,product.brand,product.manufacturer].join(' '),set=new Set(smartProductTokens(text));if(!q.every(t=>smartTokenPresent(t,set,text)))return -1;const nq=normText(query),nt=normText(text),nc=normText(product.code);let score=0;if(nc&&nq===nc)score+=250;else if(nc&&nc.startsWith(nq))score+=120;if(nq&&nt.includes(nq))score+=60;const type=new Set(['coude','ptrap','tee','coupling','reducer','bushing','ballvalve','checkvalve','waterheater','sumppump','robinet','adaptateur','union','mamelon','lavabo','toilette','prv','flexiblehose','press','pushfit']);for(const t of q){if(type.has(t))score+=35;else if(['abs','pvc','pex','cpvc','cuivre','pexalpex'].includes(t))score+=24;else if(t.startsWith('dim'))score+=20;else if(t.startsWith('angle'))score+=18;else score+=8;}return score;}
 function fastSmartProductScore(product,query,qTokens){if(!qTokens.length)return 1;const nq=normText(query),nt=product.__search||normText([product.code,product.description,product.supplierCategoryName,product.category,product.brand,product.manufacturer].join(' ')),nc=normText(product.code);let score=0;if(nc&&nq===nc)score+=250;else if(nc&&nc.startsWith(nq))score+=120;if(nq&&nt.includes(nq))score+=60;const type=new Set(['coude','ptrap','tee','coupling','reducer','bushing','ballvalve','checkvalve','waterheater','sumppump','robinet','adaptateur','union','mamelon','lavabo','toilette','prv','flexiblehose','press','pushfit']);for(const t of qTokens){if(type.has(t))score+=35;else if(['abs','pvc','pex','cpvc','cuivre','pexalpex'].includes(t))score+=24;else if(t.startsWith('dim'))score+=20;else if(t.startsWith('angle'))score+=18;else score+=8;}return score;}
 function num(v,def=0){const raw=String(v??'').trim();if(!raw)return Number(def||0);let s=raw.replace(/\s/g,'').replace(/[$%]/g,'');if(s.includes(',')&&s.includes('.')){if(s.lastIndexOf(',')>s.lastIndexOf('.'))s=s.replace(/\./g,'').replace(',','.');else s=s.replace(/,/g,'');}else if(s.includes(','))s=s.replace(',','.');const n=Number(s.replace(/[^0-9.\-]/g,''));return Number.isFinite(n)?n:Number(def||0);}
 function normalizeProduct(p={},existing=null){
@@ -205,7 +216,7 @@ function rebuildProductIndexes(){
   let active=0,warehouseUnits=0,low=0,out=0,onOrder=0,costValue=0,saleValue=0;const categorySale={},categoryCount={};
   for(const p of productStore){
     productByIdMap.set(p.id,p);if(p.code)productByCodeMap.set(String(p.code).toLowerCase(),p);
-    const searchText=[p.code,p.description,p.supplierCategoryName,p.category,p.brand,p.manufacturer].join(' '),tokens=smartProductTokens(searchText);
+    const searchText=[p.code,p.description,p.supplierCategoryName,p.category,p.brand,p.manufacturer].join(' '),tokens=smartProductTokens(searchText);if(rawHasFlexibleConnector(searchText)&&!tokens.includes('flexiblehose'))tokens.push('flexiblehose');
     try{Object.defineProperty(p,'__search',{value:normText(searchText),writable:true,configurable:true,enumerable:false});Object.defineProperty(p,'__tokens',{value:tokens,writable:true,configurable:true,enumerable:false});}catch(_){p.__search=normText(searchText);p.__tokens=tokens;}
     for(const token of tokens){let ids=productTokenIndex.get(token);if(!ids){ids=new Set();productTokenIndex.set(token,ids);}ids.add(p.id);}
     const dupSig=duplicateSignature(p);if(dupSig){let dupIds=productDuplicateIndex.get(dupSig);if(!dupIds){dupIds=new Set();productDuplicateIndex.set(dupSig,dupIds);}dupIds.add(p.id);}
@@ -554,7 +565,7 @@ const server=http.createServer(async (req,res)=>{
   }
 
   /* ===================== Catalogue produits persistant ===================== */
-  if(req.method==='GET' && url.pathname==='/api/products/search-health') return json(res,200,{ok:true,version:'39.9',products:productStore.length,indexTokens:productTokenIndex.size,speedwayToken:productTokenIndex.get('flexiblehose')?.size||0,halfInchToken:productTokenIndex.get('dim0.5')?.size||0});
+  if(req.method==='GET' && url.pathname==='/api/products/search-health') return json(res,200,{ok:true,version:'40.0',products:productStore.length,indexTokens:productTokenIndex.size,speedwayToken:productTokenIndex.get('flexiblehose')?.size||0,halfInchToken:productTokenIndex.get('dim0.5')?.size||0});
   if(req.method==='GET' && url.pathname==='/api/products/duplicates'){
     if(onlineUser.role!=='admin')return json(res,403,{ok:false,error:'Admin seulement'});
     const groups=duplicateGroups();return json(res,200,{ok:true,groups,totalGroups:groups.length,totalProducts:groups.reduce((n,g)=>n+g.items.length,0)});
