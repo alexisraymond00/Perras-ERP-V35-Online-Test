@@ -2279,7 +2279,7 @@
   async function productApiV31(path,options={}){
     const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
     const data=await r.json().catch(()=>({}));
-    if(!r.ok||data.ok===false)throw new Error(data.error||`Erreur catalogue (${r.status})`);
+    if(!r.ok||data.ok===false){const err=new Error(data.error||`Erreur catalogue (${r.status})`);err.data=data;err.status=r.status;throw err;}
     return data;
   }
   function serverProductCalcV31(p){
@@ -2982,6 +2982,75 @@
 
   // Recherche plus réactive à l'écran; l'index serveur absorbe le travail lourd.
   try{serverProductSearchTimerV31=null;}catch(_){ }
+
+
+  /* ===== V39.9 — Recherche terrain + UI produits + anti-doublons ===== */
+  function v399SearchVariants(raw=''){
+    const q=String(raw||'').trim(),low=q.toLowerCase();const out=[q];
+    const add=v=>{v=String(v||'').trim();if(v&&!out.some(x=>x.toLowerCase()===v.toLowerCase()))out.push(v);};
+    if(/speed\s*[- ]?\s*way|spedway|speedwai|speedways/i.test(q)){
+      add(q.replace(/speed\s*[- ]?\s*way|spedway|speedwai|speedways/ig,'flexible'));
+      add(q.replace(/speed\s*[- ]?\s*way|spedway|speedwai|speedways/ig,'tressé'));
+      add(q.replace(/speed\s*[- ]?\s*way|spedway|speedwai|speedways/ig,'braided'));
+      add(q.replace(/speed\s*[- ]?\s*way|spedway|speedwai|speedways/ig,'hose'));
+    }
+    if(/\bp\s*[- ]?\s*trap\b/i.test(q)){add(q.replace(/p\s*[- ]?\s*trap/ig,'siphon'));add(q.replace(/p\s*[- ]?\s*trap/ig,'trap'));}
+    if(/\bcoupl(?:ing|in|age)?\b/i.test(q)){add(q.replace(/coupl(?:ing|in|age)?/ig,'manchon'));}
+    const frac=q.match(/\b(\d+)\s*\/\s*(\d+)\b/);
+    if(frac){const dec=Number(frac[1])/Number(frac[2]);if(Number.isFinite(dec))add(q.replace(frac[0],String(Number(dec.toFixed(4)))));}
+    if(/^\s*1\s*\/\s*2\s*$/.test(q)){add('0.5');add('1/2');}
+    return out.slice(0,6);
+  }
+  async function v399SearchEndpoint(q,limit){
+    const qs=new URLSearchParams({q,limit:String(limit)});
+    try{return await productApiV31('/api/products/search?'+qs.toString());}
+    catch(_){return await productApiV31('/api/products?'+new URLSearchParams({q,limit:String(limit),offset:'0',activeOnly:'1'}).toString());}
+  }
+  v391ServerProductSearch=async function(q,limit=30){
+    q=String(q||'').trim();if(q.length<2)return {items:[],total:0};limit=Math.max(1,Math.min(40,Number(limit||20)));const key=`v399|${q.toLowerCase()}|${limit}`,now=Date.now(),cached=v396ProductSearchCache.get(key);if(cached&&now-cached.at<20000)return cached.data;
+    const variants=v399SearchVariants(q),merged=[],seen=new Set();let total=0,firstError=null;
+    for(const variant of variants){
+      try{const d=await v399SearchEndpoint(variant,limit);total=Math.max(total,Number(d.total||0));for(const p of d.items||[]){if(seen.has(p.id))continue;seen.add(p.id);merged.push(p);if(merged.length>=limit)break;}if(merged.length>=Math.min(8,limit))break;}
+      catch(e){firstError=firstError||e;}
+    }
+    if(!merged.length&&firstError)throw firstError;const data={ok:true,total:Math.max(total,merged.length),items:merged.slice(0,limit),query:q};v396ProductSearchCache.set(key,{at:now,data});if(v396ProductSearchCache.size>100)v396ProductSearchCache.delete(v396ProductSearchCache.keys().next().value);return data;
+  };
+
+  // Ligne Facture / BT : produit large, champs parfaitement alignés, aucune grosse zone de stock.
+  v39MaterialRow=function(item={},c={}){
+    const p=v39ProductFallback(item),code=item.productCode||p.code||'',desc=item.description||p.description||'',price=Number(item.unitPrice ?? v39MaterialUnitPrice(p,c) ?? 0),truck=Number(item.truckQtySnapshot ?? v39TruckQty(item.productId,c.techId) ?? 0),shop=Number(item.shopQty ?? p.warehouseQty ?? 0),manual=!item.productId&&!!desc,rid=PerrasDB.uid('v399mat');
+    return `<div class="v399-material-row v395-material-row" data-v39-material data-row-id="${rid}" data-product-id="${esc(item.productId||'')}" data-product-code="${esc(code)}" data-truck-stock="${truck}" data-shop-stock="${shop}">
+      <div class="v399-material-main v395-material-main">
+        <div class="v399-material-topline"><div class="v395-material-mode"><button type="button" class="v395-mat-mode ${!manual?'active':''}" data-v395-mat-mode="catalogue">Inventaire</button><button type="button" class="v395-mat-mode ${manual?'active':''}" data-v395-mat-mode="manual">Hors inventaire</button></div><span class="v399-stock-note" data-v395-stock-note>${item.productId?`Camion ${truck} · Shop ${shop}`:'Recherchez par nom, code, dimension ou surnom métier'}</span></div>
+        <div class="v395-material-catalogue" ${manual?'hidden':''}><div class="v39-product-search v399-product-search"><input data-v39-search autocomplete="off" value="${esc(code?`${code} — ${desc}`:'')}" placeholder="Ex. Speedway 1/2, ABS 90 2, p-trap 1 1/2…"><div data-v39-results></div></div></div>
+        <div class="v395-material-manual" ${manual?'':'hidden'}><input data-v395-manual-desc value="${esc(manual?desc:'')}" placeholder="Description de l’article hors inventaire" ${manual?'':'disabled'}></div>
+        <input type="hidden" data-v39-product value="${esc(item.productId||'')}"><input type="hidden" data-v39-desc value="${esc(desc)}">
+      </div>
+      <div class="v399-num"><label>Qté</label><input data-v39-qty type="number" min="0.01" step="0.01" value="${Number(item.qty||1)}"></div>
+      <div class="v399-num"><label>Prix unitaire</label><input data-v39-price type="number" min="0" step="0.01" value="${price.toFixed(2)}"></div>
+      <div class="v399-total"><label>Total</label><strong data-v39-line-total>${money(Number(item.qty||1)*price)}</strong></div>
+      <button type="button" class="btn btn-danger btn-sm v399-remove v395-material-remove" data-v39-remove title="Retirer">🗑</button>
+    </div>`;
+  };
+
+  // Anti-doublons : affichage des doublons déjà présents.
+  async function showDuplicateProductsV399(){
+    if(user.role!=='admin')return;modal('Doublons de produits','<div class="catalog-loading"><div class="catalog-spinner"></div><p>Analyse du catalogue…</p></div>');
+    try{const d=await productApiV31('/api/products/duplicates');const groups=d.groups||[];modal('Doublons de produits',`<div class="formula"><strong>${Number(d.totalGroups||0)} groupe(s)</strong> · ${Number(d.totalProducts||0)} fiche(s) concernée(s).<br>Le système bloque maintenant les nouveaux doublons à l’ajout et à l’import.</div><div class="v399-duplicate-list">${groups.length?groups.slice(0,150).map((g,i)=>`<div class="v399-duplicate-group"><div class="v399-duplicate-title">Doublon ${i+1}</div>${g.items.map(p=>`<div class="v399-duplicate-item"><strong>${esc(p.code||'')}</strong><span>${esc(p.description||'')}</span><small>${esc(p.category||p.supplierCategoryName||'')}</small></div>`).join('')}</div>`).join(''):'<div class="empty">Aucun doublon sémantique détecté.</div>'}</div>`);}catch(e){modal('Doublons de produits',`<div class="empty">${esc(e.message)}</div>`);}
+  }
+  const v399BaseRenderProducts=renderProductsServerV31;
+  renderProductsServerV31=function(){let html=v399BaseRenderProducts();if(user.role!=='admin')return html;if(!html.includes('duplicate-products-v399'))html=html.replace('<span class="small muted">Catalogue permanent','<button class="btn btn-outline" data-action="duplicate-products-v399">⚠ Doublons</button><span class="small muted">Catalogue permanent');return html;};
+  content.addEventListener('click',e=>{const b=e.target.closest('[data-action="duplicate-products-v399"]');if(b){e.preventDefault();showDuplicateProductsV399();}},true);
+
+  // Fiche produit serveur : en cas de code différent mais produit équivalent, l'ajout est bloqué avec le produit existant affiché.
+  const v399BaseShowServerProductModal=showServerProductModalV31;
+  showServerProductModalV31=async function(id=''){
+    if(user.role!=='admin')return;let p=null;
+    if(id){modal('Produit','<div class="catalog-loading"><div class="catalog-spinner"></div><p>Chargement…</p></div>');try{p=await fetchServerProductV31(id);}catch(e){closeModal();return alert(e.message);}if(!p){closeModal();return alert('Produit introuvable.');}}
+    modal(p?'Modifier le produit':'Ajouter un produit',serverProductFormMarkupV31(p));
+    const form=$('#serverProductFormV31');form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form),catId=String(fd.get('supplierCategoryId')||''),cat=(PerrasDB.get('supplierCategories')||[]).find(c=>c.id===catId),catName=cat?.name||'À classer';const obj={...(p||{}),code:String(fd.get('code')||'').trim(),description:String(fd.get('description')||'').trim(),category:catName,supplierCategoryName:catName,supplierCategoryId:catId,listPrice:Number(fd.get('listPrice')||0),warehouseQty:Number(fd.get('warehouseQty')||0),minQty:Number(fd.get('minQty')||0),onOrderQty:Number(p?.onOrderQty||0),active:fd.get('active')==='1',source:p?.source||'manuel'};if(!obj.code||!obj.description)return alert('Code et description requis.');const calc=serverProductCalcV31(obj);obj.costPrice=calc.cost;obj.perras1Price=calc.sell;obj.perras1DiscountPct=calc.discount;const a=obj.supplierCategoryId?productSupplierAnalysis(obj):null;obj.costSupplierId=a?.best?.supplierObj?.id||'';obj.referenceSupplierId=a?.worst?.supplierObj?.id||'';try{const d=await productApiV31('/api/products/upsert',{method:'POST',body:JSON.stringify({product:obj})});productServerCacheStatsV31(d.stats);audit(p?'Modification':'Création','Produit',obj.code);closeModal();toast('Produit enregistré.');loadServerProductsV31();if(currentRoute()==='inventory')loadServerInventoryV32();}catch(err){if(err.data?.duplicate){const matches=err.data.matches||[];return alert('Produit non ajouté : doublon détecté.\n\n'+matches.map(x=>`${x.code} — ${x.description}`).join('\n'));}alert(err.message);}};
+  };
+  showProductModal=showServerProductModalV31;
 
   RENDERERS.dashboard=renderDashboardV28Fast;RENDERERS.tasks=renderTasks;RENDERERS.calendar=renderCalendar;RENDERERS.calls=renderCalls;RENDERERS.interventions=renderCalls;RENDERERS.bt=renderBT;RENDERERS.invoices=renderInvoices;RENDERERS.inventory=renderInventoryServerV32;RENDERERS.mytruck=renderMyTruckV391;RENDERERS.products=renderProductsServerV31;RENDERERS.requestproduct=renderRequestProductV25;RENDERERS.fieldpos=renderFieldPOsV391;RENDERERS.orders=renderOrdersV28Fast;RENDERERS.suppliers=renderSuppliersV36;RENDERERS.tools=renderTools;RENDERERS.reports=renderReports;RENDERERS.settings=renderSettings;
 
