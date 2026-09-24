@@ -34,6 +34,7 @@ let productTokenIndex=new Map();
 let productSearchVocabulary=[];
 let productTokenLengthBuckets=new Map();
 let productSearchCache=new Map();
+let productDuplicateIndex=new Map();
 let customSearchAliases={};
 let learnedSearchBoosts={};
 let productStatsCache={total:0,active:0,warehouseUnits:0,low:0,out:0,onOrder:0,lowIncludingOut:0,costValue:0,saleValue:0,categorySale:{}};
@@ -176,14 +177,38 @@ function normalizeProduct(p={},existing=null){
     updatedAt:new Date().toISOString()
   };
 }
+function duplicateComparableTokens(p={}){
+  const raw=smartProductTokens(String(p.description||''));
+  const ignore=new Set(['connecteur','raccord','plomberie','piece','produit','modele','standard']);
+  return [...new Set(raw.filter(t=>!ignore.has(t)))].sort();
+}
+function duplicateSignature(p={}){
+  const tokens=duplicateComparableTokens(p);
+  if(!tokens.length)return '';
+  const brand=normProductDescription(p.brand||p.manufacturer||'');
+  const cat=normProductDescription(p.category||p.supplierCategoryName||'');
+  return `${tokens.join('|')}::${brand}::${cat}`;
+}
+function findDuplicateProducts(candidate={},excludeId=''){
+  const sig=duplicateSignature(candidate);if(!sig)return [];
+  const ids=productDuplicateIndex.get(sig)||new Set();
+  return [...ids].map(id=>productByIdMap.get(id)).filter(p=>p&&p.id!==excludeId&&String(p.code||'').toLowerCase()!==String(candidate.code||'').toLowerCase());
+}
+function duplicateGroups(){
+  const out=[];for(const [signature,ids] of productDuplicateIndex.entries()){
+    if(ids.size<2)continue;const items=[...ids].map(id=>productByIdMap.get(id)).filter(Boolean);if(items.length>1)out.push({signature,items:items.map(lightweightProduct)});
+  }
+  return out.sort((a,b)=>b.items.length-a.items.length||String(a.items[0]?.description||'').localeCompare(String(b.items[0]?.description||''),'fr'));
+}
 function rebuildProductIndexes(){
-  productByIdMap=new Map();productByCodeMap=new Map();productTokenIndex=new Map();productTokenLengthBuckets=new Map();productSearchCache.clear();
+  productByIdMap=new Map();productByCodeMap=new Map();productTokenIndex=new Map();productTokenLengthBuckets=new Map();productDuplicateIndex=new Map();productSearchCache.clear();
   let active=0,warehouseUnits=0,low=0,out=0,onOrder=0,costValue=0,saleValue=0;const categorySale={},categoryCount={};
   for(const p of productStore){
     productByIdMap.set(p.id,p);if(p.code)productByCodeMap.set(String(p.code).toLowerCase(),p);
     const searchText=[p.code,p.description,p.supplierCategoryName,p.category,p.brand,p.manufacturer].join(' '),tokens=smartProductTokens(searchText);
     try{Object.defineProperty(p,'__search',{value:normText(searchText),writable:true,configurable:true,enumerable:false});Object.defineProperty(p,'__tokens',{value:tokens,writable:true,configurable:true,enumerable:false});}catch(_){p.__search=normText(searchText);p.__tokens=tokens;}
     for(const token of tokens){let ids=productTokenIndex.get(token);if(!ids){ids=new Set();productTokenIndex.set(token,ids);}ids.add(p.id);}
+    const dupSig=duplicateSignature(p);if(dupSig){let dupIds=productDuplicateIndex.get(dupSig);if(!dupIds){dupIds=new Set();productDuplicateIndex.set(dupSig,dupIds);}dupIds.add(p.id);}
     if(p.active===false)continue;active++;categoryCount[String(p.supplierCategoryId||'')]=(categoryCount[String(p.supplierCategoryId||'')]||0)+1;const q=num(p.warehouseQty),m=num(p.minQty),cost=num(p.costPrice),list=num(p.listPrice);
     warehouseUnits+=q;onOrder+=num(p.onOrderQty);costValue+=q*cost;saleValue+=q*list;{const catName=p.supplierCategoryName||p.category||'À classer';categorySale[catName]=(categorySale[catName]||0)+q*list;}
     if(q===0)out++;else if(q<=m)low++;
@@ -246,12 +271,12 @@ function productQuery(params){
   const activeOnly=params.get('activeOnly')==='1',supplierCategoryId=String(params.get('supplierCategoryId')||'');
   const cacheKey=q?`${q}|${filter}|${activeOnly?'1':'0'}|${supplierCategoryId}|${offset}|${limit}`:'';
   if(cacheKey&&productSearchCache.has(cacheKey))return productSearchCache.get(cacheKey);
-  let rows=[];const qTokens=q?smartProductTokens(q):[],candidateRows=q?fastProductCandidates(q):productStore,source=q?[...candidateRows]:productStore;
+  let rows=[];const qTokens=q?smartProductTokens(q):[],candidateRows=q?fastProductCandidates(q):productStore,source=q?(candidateRows.length?[...candidateRows]:productStore):productStore;
   const learnedKey=q?normProductDescription(q):'',learned=learnedKey&&learnedSearchBoosts[learnedKey]?learnedSearchBoosts[learnedKey]:{};
   if(q&&learned&&typeof learned==='object'){const seen=new Set(source.map(p=>p.id));for(const id of Object.keys(learned)){const p=productByIdMap.get(String(id));if(p&&!seen.has(p.id)){source.push(p);seen.add(p.id);}}}
   for(const p of source){if(activeOnly&&p.active===false)continue;if(supplierCategoryId&&String(p.supplierCategoryId||'')!==supplierCategoryId)continue;const qty=num(p.warehouseQty),min=num(p.minQty);
     if(filter==='low'&&!(p.active!==false&&qty>0&&qty<=min))continue;if(filter==='out'&&!(p.active!==false&&qty===0))continue;if(filter==='onorder'&&!(num(p.onOrderQty)>0))continue;
-    let score=q?fastSmartProductScore(p,q,qTokens):0;if(q&&learned&&learned[p.id])score+=Math.min(120,Number(learned[p.id]||0)*18);rows.push({p,score});
+    let score=q?(candidateRows.length?fastSmartProductScore(p,q,qTokens):smartProductScore(p,q)):0;if(q&&score<0)continue;if(q&&learned&&learned[p.id])score+=Math.min(120,Number(learned[p.id]||0)*18);rows.push({p,score});
   }
   if(q)rows.sort((a,b)=>b.score-a.score||String(a.p.description||'').localeCompare(String(b.p.description||''),'fr'));
   const result={total:rows.length,offset,limit,items:rows.slice(offset,offset+limit).map(x=>x.p),stats:productStatsCache};
@@ -529,6 +554,11 @@ const server=http.createServer(async (req,res)=>{
   }
 
   /* ===================== Catalogue produits persistant ===================== */
+  if(req.method==='GET' && url.pathname==='/api/products/search-health') return json(res,200,{ok:true,version:'39.9',products:productStore.length,indexTokens:productTokenIndex.size,speedwayToken:productTokenIndex.get('flexiblehose')?.size||0,halfInchToken:productTokenIndex.get('dim0.5')?.size||0});
+  if(req.method==='GET' && url.pathname==='/api/products/duplicates'){
+    if(onlineUser.role!=='admin')return json(res,403,{ok:false,error:'Admin seulement'});
+    const groups=duplicateGroups();return json(res,200,{ok:true,groups,totalGroups:groups.length,totalProducts:groups.reduce((n,g)=>n+g.items.length,0)});
+  }
   if(req.method==='GET' && url.pathname==='/api/products/stats') return json(res,200,{ok:true,stats:productStatsCache});
   if(req.method==='GET' && url.pathname==='/api/products/search'){const q=String(url.searchParams.get('q')||'').trim();if(q.length<2)return json(res,200,{ok:true,total:0,items:[]});const params=new URLSearchParams(url.searchParams);params.set('activeOnly','1');params.set('offset','0');params.set('limit',String(Math.max(1,Math.min(40,Number(url.searchParams.get('limit')||20)))));const d=productQuery(params);return json(res,200,{ok:true,total:d.total,items:d.items.map(lightweightProduct)});}
   if(req.method==='GET' && url.pathname==='/api/products') return json(res,200,{ok:true,...productQuery(url.searchParams)});
@@ -539,7 +569,7 @@ const server=http.createServer(async (req,res)=>{
     try{const body=await parseBody(req),ids=Array.isArray(body.ids)?body.ids.slice(0,1000):[];return json(res,200,{ok:true,items:ids.map(id=>productByIdMap.get(String(id))).filter(Boolean)});}catch(e){return json(res,400,{ok:false,error:'Recherche produits invalide'});}
   }
   if(req.method==='POST' && url.pathname==='/api/products/upsert'){
-    try{const body=await parseBody(req),incoming=body.product||body;if(!incoming||(!incoming.code&&!incoming.id))return json(res,400,{error:'Code produit requis'});const existing=(incoming.id&&productByIdMap.get(String(incoming.id)))||productByCodeMap.get(String(incoming.code||'').toLowerCase())||null;const p=normalizeProduct({...incoming,source:incoming.source||existing?.source||'manuel'},existing);if(existing){const i=productStore.findIndex(x=>x.id===existing.id);productStore[i]=p;}else productStore.push(p);saveProductStore();return json(res,200,{ok:true,product:p,stats:productStatsCache});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+    try{const body=await parseBody(req),incoming=body.product||body;if(!incoming||(!incoming.code&&!incoming.id))return json(res,400,{error:'Code produit requis'});const existing=(incoming.id&&productByIdMap.get(String(incoming.id)))||productByCodeMap.get(String(incoming.code||'').toLowerCase())||null;const preview=normalizeProduct({...incoming,source:incoming.source||existing?.source||'manuel'},existing);if(!existing){const duplicates=findDuplicateProducts(preview);if(duplicates.length)return json(res,409,{ok:false,error:'Produit déjà existant sous un autre numéro.',duplicate:true,matches:duplicates.slice(0,10).map(lightweightProduct)});}const p=preview;if(existing){const i=productStore.findIndex(x=>x.id===existing.id);productStore[i]=p;}else productStore.push(p);saveProductStore();return json(res,200,{ok:true,product:p,stats:productStatsCache});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
   if(req.method==='POST' && url.pathname==='/api/products/patch'){
     try{const body=await parseBody(req),id=String(body.id||''),existing=productByIdMap.get(id);if(!existing)return json(res,404,{error:'Produit introuvable'});const p=normalizeProduct({...existing,...(body.patch||{}),id},existing),i=productStore.findIndex(x=>x.id===id);productStore[i]=p;saveProductStore();return json(res,200,{ok:true,product:p,stats:productStatsCache});}catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
@@ -547,7 +577,7 @@ const server=http.createServer(async (req,res)=>{
   if(req.method==='POST' && url.pathname==='/api/products/import/start'){
     try{
       const body=await parseBody(req),mode=body.mode==='prices'?'prices':'catalog';
-      productImportSession={mode,map:new Map(productStore.map(p=>[String(p.code||'').toLowerCase(),p])),added:0,updated:0,priceUpdated:0,notFound:0,received:0,startedAt:Date.now()};
+      productImportSession={mode,map:new Map(productStore.map(p=>[String(p.code||'').toLowerCase(),p])),dupMap:new Map(productStore.map(p=>[duplicateSignature(p),p]).filter(([k])=>k)),duplicatesSkipped:0,duplicateSamples:[],added:0,updated:0,priceUpdated:0,notFound:0,received:0,startedAt:Date.now()};
       return json(res,200,{ok:true,mode,existing:productStore.length});
     }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
@@ -574,6 +604,7 @@ const server=http.createServer(async (req,res)=>{
           const p=normalizeProduct(patch,existing);productImportSession.map.set(key,p);productImportSession.priceUpdated++;continue;
         }
         const incoming={...row,source:'winpriser'};
+        if(!existing){const preview=normalizeProduct(incoming,null),sig=duplicateSignature(preview),dup=sig?productImportSession.dupMap.get(sig):null;if(dup&&String(dup.code||'').toLowerCase()!==key){productImportSession.duplicatesSkipped++;if(productImportSession.duplicateSamples.length<50)productImportSession.duplicateSamples.push({incoming:{code:preview.code,description:preview.description},existing:{id:dup.id,code:dup.code,description:dup.description}});continue;}if(sig)productImportSession.dupMap.set(sig,preview);}
         if(existing&&row.listPrice!==undefined&&row.costPrice===undefined&&row.perras1Price===undefined){
           const oldList=num(existing.listPrice,0),newList=num(row.listPrice,oldList),ratio=oldList>0?newList/oldList:null;
           if(ratio!==null){incoming.costPrice=num(existing.costPrice,0)*ratio;incoming.perras1Price=num(existing.perras1Price,0)*ratio;}
@@ -581,13 +612,13 @@ const server=http.createServer(async (req,res)=>{
         const p=normalizeProduct(incoming,existing);productImportSession.map.set(key,p);
         if(existing)productImportSession.updated++;else productImportSession.added++;
       }
-      return json(res,200,{ok:true,mode:productImportSession.mode,received:productImportSession.received,added:productImportSession.added,updated:productImportSession.updated,priceUpdated:productImportSession.priceUpdated,notFound:productImportSession.notFound});
+      return json(res,200,{ok:true,mode:productImportSession.mode,received:productImportSession.received,added:productImportSession.added,updated:productImportSession.updated,priceUpdated:productImportSession.priceUpdated,notFound:productImportSession.notFound,duplicatesSkipped:productImportSession.duplicatesSkipped||0,duplicateSamples:productImportSession.duplicateSamples||[]});
     }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
   if(req.method==='POST' && url.pathname==='/api/products/import/finish'){
     if(!productImportSession)return json(res,400,{error:'Aucun import en cours'});
     productStore=[...productImportSession.map.values()];
-    const result={mode:productImportSession.mode,received:productImportSession.received,added:productImportSession.added,updated:productImportSession.updated,priceUpdated:productImportSession.priceUpdated,notFound:productImportSession.notFound,total:productStore.length};
+    const result={mode:productImportSession.mode,received:productImportSession.received,added:productImportSession.added,updated:productImportSession.updated,priceUpdated:productImportSession.priceUpdated,notFound:productImportSession.notFound,duplicatesSkipped:productImportSession.duplicatesSkipped||0,duplicateSamples:productImportSession.duplicateSamples||[],total:productStore.length};
     productImportSession=null;saveProductStore();return json(res,200,{ok:true,...result,stats:productStatsCache});
   }
 
