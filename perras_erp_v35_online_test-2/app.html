@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Perras ERP V39.8 — Gestion</title>
-  <link rel="stylesheet" href="css/styles.css?v=39.8.1" />
+  <title>Perras ERP V39.9 — Gestion</title>
+  <link rel="stylesheet" href="css/styles.css?v=39.9.1" />
 </head>
 <body>
   <div class="app-shell">
@@ -31,7 +31,7 @@
           </div>
         </div>
         <div class="topbar-actions">
-          <span class="build-chip" title="Version chargée">V39.8</span>
+          <span class="build-chip" title="Version chargée">V39.9</span>
           <div class="user-chip">
             <div class="avatar" id="avatar">P</div>
             <div><strong id="userName">Utilisateur</strong><div class="small muted" id="userRole">—</div></div>
@@ -45,10 +45,10 @@
   <div class="toast-wrap" id="toastWrap"></div>
   <div id="modalRoot"></div>
 
-  <script src="js/cloud.js?v=39.8.1"></script>
+  <script src="js/cloud.js?v=39.9.1"></script>
   <script>
     (async()=>{
-      function load(src,optional=false){return new Promise((resolve,reject)=>{const s=document.createElement('script');const local=!/^https?:\/\//i.test(src);s.src=local?src+(src.includes('?')?'&':'?')+'v=39.8.1':src;s.onload=resolve;s.onerror=optional?resolve:reject;document.body.appendChild(s);});}
+      function load(src,optional=false){return new Promise((resolve,reject)=>{const s=document.createElement('script');const local=!/^https?:\/\//i.test(src);s.src=local?src+(src.includes('?')?'&':'?')+'v=39.9.1':src;s.onload=resolve;s.onerror=optional?resolve:reject;document.body.appendChild(s);});}
       try{
         await PerrasCloud.prepareApp();
         await load('js/data.js');
