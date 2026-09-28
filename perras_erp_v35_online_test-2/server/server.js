@@ -544,7 +544,42 @@ const server=http.createServer(async (req,res)=>{
       }
       const idx=productStore.findIndex(x=>x.id===p.id);productStore[idx]=normalizeProduct(p,p);saveProductStore();
       const clean=stock.filter(x=>num(x.qty)>0);await online.setState('truckStock',clean,onlineUser);
+      try{const mvRow=rows.find(x=>x.key==='inventoryMovements'),mv=Array.isArray(mvRow?.value)?JSON.parse(JSON.stringify(mvRow.value)):[];mv.unshift({id:'mov_'+crypto.randomUUID(),at:new Date().toISOString(),productId,productCode:p.code||'',description:p.description||'',qty,direction,type:'transfer',from:direction==='shop-to-truck'?'shop':truckId,to:direction==='shop-to-truck'?truckId:'shop',truckId,userId:onlineUser.id});while(mv.length>5000)mv.pop();await online.setState('inventoryMovements',mv,onlineUser);}catch(_){ }
       return json(res,200,{ok:true,product:productByIdMap.get(productId),truckQty:num(tr.qty),truckStock:clean,stats:productStatsCache});
+    }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
+  }
+
+
+  /* ===================== V41 — consommation inventaire par document ===================== */
+  if(req.method==='POST' && url.pathname==='/api/inventory/document-adjust'){
+    try{
+      const body=await parseBody(req),documentId=String(body.documentId||'').trim(),docType=String(body.docType||'Document'),docNumber=String(body.docNumber||documentId),projectId=String(body.projectId||''),requestedTruck=String(body.truckId||'');
+      if(!documentId)return json(res,400,{ok:false,error:'Document manquant'});
+      const normalizeLines=arr=>{
+        const map=new Map();
+        for(const x of Array.isArray(arr)?arr:[]){const productId=String(x?.productId||'');const qty=num(x?.qty,0);if(!productId||!(qty>0))continue;map.set(productId,(map.get(productId)||0)+qty);}
+        return [...map].map(([productId,qty])=>({productId,qty}));
+      };
+      const nextLines=normalizeLines(body.materials),legacyLines=normalizeLines(body.previousMaterials);
+      const truckId=onlineUser.role==='tech'?String(onlineUser.truckId||requestedTruck):requestedTruck;
+      if(!truckId && (nextLines.length||legacyLines.length))return json(res,400,{ok:false,error:'Aucun camion associé au document'});
+      if(!truckId)return json(res,200,{ok:true,truckStock:[],inventoryCommitments:[],inventoryMovements:[],commitment:null});
+      const rows=await online.getStateAll();
+      const read=k=>{const r=rows.find(x=>x.key===k);return Array.isArray(r?.value)?JSON.parse(JSON.stringify(r.value)):[];};
+      const stock=read('truckStock'),commitments=read('inventoryCommitments'),movements=read('inventoryMovements');
+      let commit=commitments.find(x=>String(x.documentId)===documentId);
+      const oldLines=commit?normalizeLines(commit.materials):(legacyLines.length?legacyLines:[]);
+      const oldMap=new Map(oldLines.map(x=>[x.productId,x.qty])),newMap=new Map(nextLines.map(x=>[x.productId,x.qty]));
+      const ids=new Set([...oldMap.keys(),...newMap.keys()]),shortages=[];
+      for(const id of ids){const delta=(newMap.get(id)||0)-(oldMap.get(id)||0);if(delta<=0)continue;const row=stock.find(x=>String(x.truckId)===truckId&&String(x.productId)===id),have=num(row?.qty,0);if(delta>have+1e-9){const p=productByIdMap.get(id);shortages.push({productId:id,description:p?.description||id,needed:delta,available:have});}}
+      if(shortages.length)return json(res,409,{ok:false,error:'Stock camion insuffisant',shortages});
+      const now=new Date().toISOString();
+      for(const id of ids){const delta=(newMap.get(id)||0)-(oldMap.get(id)||0);if(Math.abs(delta)<1e-9)continue;let row=stock.find(x=>String(x.truckId)===truckId&&String(x.productId)===id);if(!row){row={truckId,productId:id,qty:0};stock.push(row);}row.qty=Math.max(0,num(row.qty)-delta);const p=productByIdMap.get(id);movements.unshift({id:'mov_'+crypto.randomUUID(),at:now,productId:id,productCode:p?.code||'',description:p?.description||'',qty:delta>0?-delta:Math.abs(delta),type:delta>0?'document-consumption':'document-return',truckId,documentId,docType,docNumber,projectId,userId:onlineUser.id});}
+      const cleanStock=stock.filter(x=>num(x.qty)>0);
+      if(nextLines.length){const nextCommit={documentId,truckId,materials:nextLines,docType,docNumber,projectId,updatedAt:now,updatedBy:onlineUser.id};if(commit)Object.assign(commit,nextCommit);else commitments.push(nextCommit);}else{const i=commitments.findIndex(x=>String(x.documentId)===documentId);if(i>=0)commitments.splice(i,1);}
+      while(movements.length>5000)movements.pop();
+      await online.setState('truckStock',cleanStock,onlineUser);await online.setState('inventoryCommitments',commitments,onlineUser);await online.setState('inventoryMovements',movements,onlineUser);
+      return json(res,200,{ok:true,truckStock:cleanStock,inventoryCommitments:commitments,inventoryMovements:movements,commitment:commitments.find(x=>String(x.documentId)===documentId)||null});
     }catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
 

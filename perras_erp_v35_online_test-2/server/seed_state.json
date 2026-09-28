@@ -524,5 +524,8 @@
       "poNext": 3,
       "quoteNext": 1
     }
-  }
+  },
+  "projects": [],
+  "inventoryMovements": [],
+  "inventoryCommitments": []
 }
