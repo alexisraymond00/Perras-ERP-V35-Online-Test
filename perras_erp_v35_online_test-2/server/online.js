@@ -153,9 +153,10 @@ function createOnlineService({serverDir}){
     }
     return used;
   }
-  async function reservePoNumber(prefix,user,source='po'){
+  async function reservePoNumber(prefix,user,source='po',startAt=1){
     prefix=String(prefix||String(new Date().getFullYear()).slice(-2)).replace(/\D/g,'').slice(-2);
     if(!/^\d{2}$/.test(prefix))throw new Error('Préfixe PO invalide');
+    startAt=Math.max(1,Math.min(9999,Number(startAt||1)||1));
     const owner=String(user?.id||'system'),src=String(source||'po');
     if(mode==='postgres'){
       const c=await pool.connect();
@@ -163,22 +164,35 @@ function createOnlineService({serverDir}){
         await c.query('BEGIN');
         await c.query('SELECT pg_advisory_xact_lock($1)',[9283501]);
         const existing=await c.query("SELECT number FROM perras_po_numbers WHERE owner_id=$1 AND source=$2 AND status='reserved' ORDER BY reserved_at LIMIT 1",[owner,src]);
-        if(existing.rowCount){await c.query('COMMIT');return existing.rows[0].number;}
+        const ownReserved=existing.rows[0]?.number||'';
         const sr=await c.query("SELECT key,value FROM perras_state WHERE key IN ('purchaseOrders','fieldPOs')");
         const used=poNumbersFromStateRows(sr.rows,prefix);
-        const rr=await c.query("SELECT number FROM perras_po_numbers WHERE number LIKE $1 AND status IN ('reserved','committed')",[prefix+'-%']);
-        for(const x of rr.rows){const m=String(x.number||'').match(/-(\d{4})$/);if(m)used.add(Number(m[1]));}
-        let n=1;while(used.has(n))n++;
+        const rr=await c.query("SELECT number,owner_id,source,status FROM perras_po_numbers WHERE number LIKE $1 AND status IN ('reserved','committed')",[prefix+'-%']);
+        for(const x of rr.rows){
+          if(x.status==='reserved'&&x.owner_id===owner&&x.source===src)continue;
+          const m=String(x.number||'').match(/-(\d{4})$/);if(m)used.add(Number(m[1]));
+        }
+        let n=startAt;while(n<=9999&&used.has(n))n++;
+        if(n>9999)throw new Error('Aucun numéro PO disponible pour ce préfixe');
         const number=`${prefix}-${String(n).padStart(4,'0')}`;
+        if(ownReserved===number){await c.query('COMMIT');return number;}
+        await c.query("DELETE FROM perras_po_numbers WHERE owner_id=$1 AND source=$2 AND status='reserved'",[owner,src]);
         await c.query("INSERT INTO perras_po_numbers(number,owner_id,source,status,reserved_at,updated_at) VALUES($1,$2,$3,'reserved',NOW(),NOW()) ON CONFLICT(number) DO NOTHING",[number,owner,src]);
-        await c.query('COMMIT');return number;
+        const verify=await c.query("SELECT number FROM perras_po_numbers WHERE owner_id=$1 AND source=$2 AND status='reserved' ORDER BY reserved_at DESC LIMIT 1",[owner,src]);
+        await c.query('COMMIT');
+        return verify.rows[0]?.number||number;
       }catch(e){try{await c.query('ROLLBACK');}catch(_){ }throw e;}finally{c.release();}
     }
-    const existing=Object.values(local.poNumbers||{}).find(x=>x.owner_id===owner&&x.source===src&&x.status==='reserved');
-    if(existing)return existing.number;
     const rows=Object.entries(local.state||{}).map(([key,x])=>({key,value:x?.value})),used=poNumbersFromStateRows(rows,prefix);
-    Object.values(local.poNumbers||{}).filter(x=>['reserved','committed'].includes(x.status)&&String(x.number||'').startsWith(prefix+'-')).forEach(x=>{const m=String(x.number).match(/-(\d{4})$/);if(m)used.add(Number(m[1]));});
-    let n=1;while(used.has(n))n++;const number=`${prefix}-${String(n).padStart(4,'0')}`;
+    const own=Object.values(local.poNumbers||{}).find(x=>x.owner_id===owner&&x.source===src&&x.status==='reserved');
+    Object.values(local.poNumbers||{}).filter(x=>['reserved','committed'].includes(x.status)&&String(x.number||'').startsWith(prefix+'-')).forEach(x=>{
+      if(x.status==='reserved'&&x.owner_id===owner&&x.source===src)return;
+      const m=String(x.number).match(/-(\d{4})$/);if(m)used.add(Number(m[1]));
+    });
+    let n=startAt;while(n<=9999&&used.has(n))n++;if(n>9999)throw new Error('Aucun numéro PO disponible pour ce préfixe');
+    const number=`${prefix}-${String(n).padStart(4,'0')}`;
+    if(own?.number===number)return number;
+    for(const [k,x] of Object.entries(local.poNumbers||{}))if(x.owner_id===owner&&x.source===src&&x.status==='reserved')delete local.poNumbers[k];
     local.poNumbers[number]={number,owner_id:owner,source:src,status:'reserved',reserved_at:new Date().toISOString()};writeLocal();return number;
   }
   async function commitPoNumber(number,user,documentId='',source='po'){

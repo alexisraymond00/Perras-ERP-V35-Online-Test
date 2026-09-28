@@ -513,7 +513,7 @@ const server=http.createServer(async (req,res)=>{
 
   /* ===================== Numérotation PO centrale ===================== */
   if(req.method==='POST' && url.pathname==='/api/po-number/reserve'){
-    try{const body=await parseBody(req),number=await online.reservePoNumber(body.prefix,onlineUser,body.source||'po');return json(res,200,{ok:true,number});}
+    try{const body=await parseBody(req),number=await online.reservePoNumber(body.prefix,onlineUser,body.source||'po',body.startAt);return json(res,200,{ok:true,number});}
     catch(e){return json(res,400,{ok:false,error:String(e.message||e)});}
   }
   if(req.method==='POST' && url.pathname==='/api/po-number/commit'){
