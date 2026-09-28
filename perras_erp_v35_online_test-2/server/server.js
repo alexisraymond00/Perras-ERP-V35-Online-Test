@@ -600,7 +600,7 @@ const server=http.createServer(async (req,res)=>{
   }
 
   /* ===================== Catalogue produits persistant ===================== */
-  if(req.method==='GET' && url.pathname==='/api/products/search-health') return json(res,200,{ok:true,version:'41.4',products:productStore.length,indexTokens:productTokenIndex.size,speedwayToken:productTokenIndex.get('flexiblehose')?.size||0,halfInchToken:productTokenIndex.get('dim0.5')?.size||0});
+  if(req.method==='GET' && url.pathname==='/api/products/search-health') return json(res,200,{ok:true,version:'41.6',products:productStore.length,indexTokens:productTokenIndex.size,speedwayToken:productTokenIndex.get('flexiblehose')?.size||0,halfInchToken:productTokenIndex.get('dim0.5')?.size||0});
   if(req.method==='GET' && url.pathname==='/api/products/duplicates'){
     if(onlineUser.role!=='admin')return json(res,403,{ok:false,error:'Admin seulement'});
     const groups=duplicateGroups();return json(res,200,{ok:true,groups,totalGroups:groups.length,totalProducts:groups.reduce((n,g)=>n+g.items.length,0)});
