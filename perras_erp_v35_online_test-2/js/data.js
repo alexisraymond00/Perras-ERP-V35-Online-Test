@@ -89,10 +89,13 @@
       {id:'tool2',name:'Échelle 24 pi',category:'Échelle',assetTag:'OUT-002',truckId:'t102',assignedUserId:'u_tech2',notes:'',active:true}
     ],
     permissions:{
-      admin:{dashboard:true,tasks:true,calendar:true,calls:true,clients:true,bt:true,invoices:true,punches:true,timesheets:true,minimumcalls:true,forms:true,quotes:true,crm:true,inventory:true,products:true,orders:true,suppliers:true,pricing:true,technicians:true,trucks:true,tools:true,personnel:true,roles:true,nexus:true,tax:true,reports:true,settings:true},
-      bureau:{dashboard:true,tasks:true,calendar:true,calls:true,clients:true,bt:true,invoices:true,punches:true,timesheets:true,forms:true,quotes:true,crm:true,inventory:true,products:true,tools:true,nexus:true,tax:true},
-      tech:{dashboard:true,calendar:true,interventions:true,clients:true,bt:true,invoices:true,timesheets:true,forms:true,quotes:true,inventory:true,products:true,mytruck:true,tools:true,requestproduct:true,fieldpos:true,nexus:true,tax:true}
+      admin:{dashboard:true,tasks:true,calendar:true,calls:true,projects:true,clients:true,bt:true,invoices:true,punches:true,timesheets:true,minimumcalls:true,forms:true,quotes:true,crm:true,inventory:true,products:true,orders:true,suppliers:true,pricing:true,technicians:true,trucks:true,tools:true,personnel:true,roles:true,nexus:true,tax:true,reports:true,settings:true},
+      bureau:{dashboard:true,tasks:true,calendar:true,calls:true,projects:true,clients:true,bt:true,invoices:true,punches:true,timesheets:true,forms:true,quotes:true,crm:true,inventory:true,products:true,tools:true,nexus:true,tax:true},
+      tech:{dashboard:true,calendar:true,interventions:true,projects:true,clients:true,bt:true,invoices:true,timesheets:true,forms:true,quotes:true,inventory:true,products:true,mytruck:true,tools:true,requestproduct:true,fieldpos:true,nexus:true,tax:true}
     },
+    projects:[],
+    inventoryMovements:[],
+    inventoryCommitments:[],
     reports:[],
     quotes:[],
     fieldPOs:[],
