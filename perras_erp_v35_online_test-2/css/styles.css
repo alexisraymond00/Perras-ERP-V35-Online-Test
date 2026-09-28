@@ -314,3 +314,80 @@ a{text-decoration:none;color:inherit}
 .v41-tech-checks{display:flex;flex-wrap:wrap;gap:10px}.v41-tech-checks label{display:flex;align-items:center;gap:7px;border:1px solid #dce7f0;border-radius:10px;padding:9px 11px;background:#fff;font-weight:700}
 .v41-stock-admin-card{border:1px solid #d9e4ee}
 @media(max-width:760px){.v41-project-grid{grid-template-columns:1fr}.v41-project-hero{flex-direction:column}}
+
+
+/* ===== V41.1 — Bon de commande : mise en page terrain/bureau stabilisée ===== */
+.v395-po-modal{width:min(1720px,97vw)!important;max-height:96vh!important}
+.v395-po-modal .modal-body{padding:14px 18px 20px!important}
+.v395-po-form{gap:12px!important}
+.v395-po-hero{padding:16px 18px!important;align-items:center!important}
+.v395-po-hero h2{font-size:24px!important;margin:2px 0 3px!important}
+.v395-po-hero p{font-size:12px!important}
+.v395-po-hero .v392-number-card{min-width:225px!important;padding:11px 14px!important}
+.v395-po-hero .v392-number-card strong{font-size:24px!important}
+
+.v395-po-info-grid{display:grid!important;grid-template-columns:1fr .85fr .78fr 1fr!important;gap:12px 14px!important;align-items:start!important}
+.v395-po-info-grid>.field{grid-column:auto!important;margin:0!important}
+.v395-supplier-field{grid-column:1/3!important}
+.v395-status-field{grid-column:1/3!important}
+.v395-notes-field{grid-column:3/5!important}
+.v395-po-info-grid input,.v395-po-info-grid select{min-height:42px!important}
+.v395-po-info-grid textarea{min-height:82px!important}
+.v395-po-info-grid .po-status-pills-v35{grid-template-columns:repeat(5,minmax(76px,1fr))!important;gap:6px!important}
+.v395-po-info-grid .po-status-pill-v35{min-height:42px!important;padding:8px 7px!important;font-size:11px!important}
+.v395-supplier-results{max-height:240px!important;z-index:400!important}
+
+.v395-items-card{overflow:visible!important}
+.v395-items-card .card-head{padding:12px 15px!important;align-items:center!important}
+.v395-items-card .card-body{padding:8px 14px 14px!important;overflow:visible!important}
+.v395-po-table-head{display:none!important}
+.po-items-v35{display:grid!important;gap:0!important}
+.po-line-v395{display:grid!important;grid-template-columns:minmax(420px,1fr) 86px 132px 104px 42px!important;gap:10px!important;align-items:end!important;padding:12px 4px!important;border-top:1px solid #e5edf3!important;background:#fff!important;overflow:visible!important}
+.po-line-v395:first-child{border-top:0!important}
+.po-main-v395{min-width:0!important;position:relative!important}
+.po-mode-v395{margin-bottom:6px!important}
+.po-mode-choice-v395{padding:4px 9px!important;font-size:10px!important}
+.po-search-wrap-v395{position:relative!important;z-index:20!important}
+.po-search-wrap-v395>input,.po-manual-v395>input{width:100%!important;min-height:44px!important;box-sizing:border-box!important;border:1px solid #bdd0df!important;border-radius:9px!important;padding:0 12px!important;font-size:14px!important}
+.po-selected-meta-v395{min-height:16px!important;margin-top:4px!important;font-size:10px!important;color:#73889a!important}
+.po-number-field-v395 label,.po-total-v395 label{font-size:9px!important;margin-bottom:5px!important}
+.po-number-field-v395 input{width:100%!important;min-height:44px!important;box-sizing:border-box!important;padding:0 9px!important}
+.po-total-v395 strong{min-height:44px!important;justify-content:flex-end!important;font-size:15px!important;white-space:nowrap!important}
+.po-delete-v395{width:40px!important;height:40px!important;padding:0!important;display:grid!important;place-items:center!important;margin-bottom:2px!important}
+
+/* La liste reste attachée à la colonne Article seulement. */
+.po-search-results-v35{position:absolute!important;left:0!important;right:auto!important;top:calc(100% + 5px)!important;width:min(720px,72vw)!important;min-width:100%!important;max-width:720px!important;max-height:275px!important;overflow:auto!important;z-index:500!important;background:#fff!important;border:1px solid #c8d8e5!important;border-radius:10px!important;box-shadow:0 14px 34px rgba(17,45,67,.20)!important}
+.po-search-result-v395{grid-template-columns:90px minmax(220px,1fr) 72px 82px!important;gap:8px!important;padding:9px 10px!important;font-size:12px!important}
+.po-hit-desc-v395 strong{font-size:12px!important;line-height:1.2!important}
+.po-hit-desc-v395 small{font-size:9px!important}
+.po-hit-stock-v395,.po-hit-cost-v395{font-size:10px!important}
+.po-hit-stock-v395 strong{font-size:12px!important}
+.v391-search-count{position:sticky!important;top:0!important;z-index:2!important;background:#f7fafc!important}
+
+.v395-po-footer{display:grid!important;grid-template-columns:minmax(0,1fr) 330px!important;gap:12px!important;align-items:stretch!important;margin-top:12px!important}
+.v395-po-tip{padding:10px 12px!important;font-size:11px!important}
+.v395-po-footer .po-summary-v35{min-width:0!important;width:100%!important;padding:11px 14px!important}
+.v395-po-footer .po-summary-v35 strong{font-size:21px!important}
+.v395-po-form .v392-action-bar{margin-top:0!important;padding:10px 12px!important}
+.v395-po-form .v392-action-left .btn{min-height:40px!important}
+.v395-po-form .v392-primary-action{min-height:42px!important}
+
+@media(max-width:1180px){
+  .v395-po-info-grid{grid-template-columns:1fr 1fr!important}
+  .v395-supplier-field,.v395-status-field,.v395-notes-field{grid-column:1/-1!important}
+  .po-line-v395{grid-template-columns:minmax(300px,1fr) 78px 116px 96px 40px!important}
+  .po-search-results-v35{width:min(640px,86vw)!important}
+}
+@media(max-width:760px){
+  .v395-po-modal{width:100vw!important;max-height:100vh!important}
+  .v395-po-info-grid{grid-template-columns:1fr!important}
+  .v395-po-info-grid>*{grid-column:1!important}
+  .po-line-v395{grid-template-columns:1fr 1fr!important;gap:9px!important}
+  .po-main-v395{grid-column:1/-1!important}
+  .po-total-v395{grid-column:1!important}
+  .po-delete-v395{grid-column:2!important;justify-self:end!important}
+  .po-search-results-v35{width:100%!important;max-width:none!important;max-height:250px!important}
+  .po-search-result-v395{grid-template-columns:78px 1fr!important}
+  .po-hit-stock-v395,.po-hit-cost-v395{grid-column:2!important;text-align:left!important}
+  .v395-po-footer{grid-template-columns:1fr!important}
+}
