@@ -305,3 +305,12 @@ a{text-decoration:none;color:inherit}
 .v39-material-summary.v392-material-summary{margin-top:14px!important;margin-left:auto!important;max-width:360px!important;background:#f2f7fb!important;border:1px solid #d8e5ee!important;color:#28485f!important}
 @media(max-width:1050px){.v400-material-row{grid-template-columns:minmax(0,1fr) 82px 130px 105px 42px!important}.v400-product-search>[data-v39-results]{width:min(760px,92vw)!important}}
 @media(max-width:760px){.v400-material-row{grid-template-columns:1fr 1fr!important;gap:10px!important}.v400-material-main{grid-column:1/-1!important}.v400-total{grid-column:1!important}.v400-remove{grid-column:2!important;justify-self:end!important}.v400-product-label{align-items:flex-start;flex-direction:column}.v400-product-search>[data-v39-results]{width:100%!important}.v400-product-search .v39-product-hit{grid-template-columns:85px 1fr!important}.v400-product-search .v39-hit-stock,.v400-product-search .v39-hit-price{grid-column:2!important;text-align:left!important}}
+
+/* ===== V41.0 — Projets ===== */
+.v41-project-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:16px}
+.v41-project-card{overflow:hidden}.v41-project-card .card-head{align-items:flex-start}.v41-project-card h3{margin:3px 0 0;font-size:18px}
+.v41-project-address{font-weight:800;margin-bottom:4px}.v41-project-meta{display:flex;flex-wrap:wrap;gap:8px 14px;margin:14px 0;color:#52677b;font-size:13px}
+.v41-project-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px 20px;border:1px solid #dce7f0;border-radius:16px;background:#f8fbfe;margin-bottom:16px}.v41-project-hero span{font-size:12px;color:#617487;font-weight:800}.v41-project-hero h2{margin:4px 0 6px}.v41-project-hero p{margin:0;color:#52677b}
+.v41-tech-checks{display:flex;flex-wrap:wrap;gap:10px}.v41-tech-checks label{display:flex;align-items:center;gap:7px;border:1px solid #dce7f0;border-radius:10px;padding:9px 11px;background:#fff;font-weight:700}
+.v41-stock-admin-card{border:1px solid #d9e4ee}
+@media(max-width:760px){.v41-project-grid{grid-template-columns:1fr}.v41-project-hero{flex-direction:column}}
