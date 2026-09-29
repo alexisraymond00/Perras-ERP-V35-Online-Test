@@ -3333,6 +3333,11 @@
       PerrasDB.set('serviceCalls',all);audit('Optimisation','Tournée',`${byId(getUsers(),techId)?.name||techId} · ${date}`);closeModal();toast(user.role==='tech'?'Ma tournée a été appliquée.':'Tournée proposée appliquée.');render();
     };
 
+    /* V42.8.1 — le premier rendu V42.4 avait déjà eu lieu avant l'installation
+       des surcharges V42.8. Forcer un nouveau rendu une fois celles-ci prêtes
+       afin que le rôle Tech voie immédiatement Calendrier | Ma tournée. */
+    if(currentRoute()==='calendar') render();
+
 })();
 
 /* ===== V39.8 — REDBOOK.DAT restauré pour mise à jour Prix Liste ===== */
