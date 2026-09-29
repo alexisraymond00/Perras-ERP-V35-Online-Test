@@ -143,6 +143,32 @@ function createOnlineService({serverDir}){
   function saveProducts(products){pendingProducts=products;clearTimeout(productSaveTimer);return new Promise(resolve=>{productSaveTimer=setTimeout(async()=>{const p=pendingProducts;pendingProducts=null;try{await saveProductsNow(p);}catch(e){console.error('Sauvegarde produits online:',e.message);}resolve();},350);});}
   async function loadProducts(){if(mode==='postgres'){const r=await pool.query('SELECT value FROM perras_products_snapshot WHERE id=1');return r.rows[0]?.value||null;}return local.products||null;}
 
+  async function replaceStateAll(rows,user){
+    if(!user||user.role!=='admin')throw new Error('Admin seulement');
+    const clean=Array.isArray(rows)?rows.filter(x=>x&&String(x.key||'').trim()).map(x=>({key:String(x.key).trim(),value:x.value})):[];
+    if(mode==='postgres'){
+      const c=await pool.connect();
+      try{
+        await c.query('BEGIN');
+        await c.query('DELETE FROM perras_state');
+        for(const x of clean)await c.query('INSERT INTO perras_state(key,value,version,updated_at,updated_by) VALUES($1,$2::jsonb,1,NOW(),$3)',[x.key,JSON.stringify(x.value),user.id]);
+        await c.query('COMMIT');
+      }catch(e){try{await c.query('ROLLBACK');}catch(_){}throw e;}finally{c.release();}
+    }else{
+      local.state={};
+      const now=new Date().toISOString();
+      for(const x of clean)local.state[x.key]={value:x.value,version:1,updated_at:now,updated_by:user.id};
+      writeLocal();
+    }
+    return clean.length;
+  }
+  async function replaceProducts(products,user){
+    if(!user||user.role!=='admin')throw new Error('Admin seulement');
+    if(!Array.isArray(products))throw new Error('Catalogue produits invalide');
+    await saveProductsNow(products);
+    return products.length;
+  }
+
   function poNumbersFromStateRows(rows,prefix){
     const used=new Set();
     const re=new RegExp('^'+String(prefix).replace(/[^0-9]/g,'')+'-(\\d{4})$');
@@ -209,7 +235,7 @@ function createOnlineService({serverDir}){
   async function saveBinary(name,buffer,metadata={}){if(mode==='postgres')await pool.query(`INSERT INTO perras_files(name,content,metadata,updated_at) VALUES($1,$2,$3::jsonb,NOW()) ON CONFLICT(name) DO UPDATE SET content=EXCLUDED.content,metadata=EXCLUDED.metadata,updated_at=NOW()`,[name,buffer,JSON.stringify(metadata)]);else{local.files[name]={metadata,updated_at:new Date().toISOString()};writeLocal();}}
   async function loadBinary(name){if(mode!=='postgres')return null;const r=await pool.query('SELECT content,metadata,updated_at FROM perras_files WHERE name=$1',[name]);if(!r.rowCount)return null;return {content:r.rows[0].content,metadata:r.rows[0].metadata,updatedAt:new Date(r.rows[0].updated_at).toISOString()};}
 
-  return {init,mode:()=>mode,authenticate,createSession,deleteSession,sessionUser,cookieFor,getStateAll,getStateChanges,setState,canWriteState,loadProducts,saveProducts,reservePoNumber,commitPoNumber,releasePoNumber,saveBinary,loadBinary,testUsers:()=>TEST_USERS.map(({password,...u})=>u)};
+  return {init,mode:()=>mode,authenticate,createSession,deleteSession,sessionUser,cookieFor,getStateAll,getStateChanges,setState,replaceStateAll,canWriteState,loadProducts,saveProducts,replaceProducts,reservePoNumber,commitPoNumber,releasePoNumber,saveBinary,loadBinary,testUsers:()=>TEST_USERS.map(({password,...u})=>u)};
 }
 
 module.exports={createOnlineService};
