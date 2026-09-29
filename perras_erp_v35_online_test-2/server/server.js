@@ -310,77 +310,6 @@ function parseBody(req){
     req.on('error',reject);
   });
 }
-
-const GOOGLE_MAPS_API_KEY = String(process.env.GOOGLE_MAPS_API_KEY||'').trim();
-function routeSeconds(v){const m=String(v||'0s').match(/^([0-9.]+)s$/);return m?Math.round(Number(m[1])):0;}
-async function googleRouteMatrix(addresses,traffic=true){
-  if(!GOOGLE_MAPS_API_KEY) throw Object.assign(new Error('GOOGLE_MAPS_API_KEY non configurée sur Render.'),{status:503});
-  const points=addresses.map(a=>({waypoint:{address:String(a||'').trim()}}));
-  if(points.some(x=>!x.waypoint.address)) throw Object.assign(new Error('Une adresse de tournée est manquante.'),{status:400});
-  const body={origins:points,destinations:points,travelMode:'DRIVE',routingPreference:traffic?'TRAFFIC_AWARE':'TRAFFIC_UNAWARE',languageCode:'fr-CA',regionCode:'ca',units:'METRIC'};
-  const r=await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':GOOGLE_MAPS_API_KEY,'X-Goog-FieldMask':'originIndex,destinationIndex,status,condition,distanceMeters,duration,staticDuration'},body:JSON.stringify(body)});
-  const text=await r.text(); let data; try{data=JSON.parse(text)}catch(_){data=null}
-  if(!r.ok) throw Object.assign(new Error(data?.error?.message||`Google Routes HTTP ${r.status}`),{status:r.status===429?429:502});
-  const n=addresses.length,m=Array.from({length:n},()=>Array.from({length:n},()=>({seconds:0,meters:0})));
-  for(const e of Array.isArray(data)?data:[]){if(e.status && e.status.code)continue; m[e.originIndex][e.destinationIndex]={seconds:routeSeconds(e.duration),meters:Number(e.distanceMeters||0)};}
-  return m;
-}
-const ROUTE_PROVIDER = String(process.env.PERRAS_ROUTE_PROVIDER||'auto').trim().toLowerCase();
-const freeGeocodeCache=new Map();
-async function freeGeocode(address){
-  const key=String(address||'').trim().toLowerCase();
-  if(!key) throw Object.assign(new Error('Adresse vide.'),{status:400});
-  if(freeGeocodeCache.has(key)) return freeGeocodeCache.get(key);
-  const q=encodeURIComponent(String(address).trim()+', Canada');
-  const r=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=ca&q=${q}`,{headers:{'User-Agent':'PerrasERP/42.2 route-demo','Accept-Language':'fr-CA,fr;q=0.9,en;q=0.5'}});
-  if(!r.ok) throw Object.assign(new Error(`Géocodage gratuit HTTP ${r.status}`),{status:502});
-  const data=await r.json().catch(()=>[]),x=Array.isArray(data)?data[0]:null;
-  if(!x) throw Object.assign(new Error(`Adresse introuvable: ${address}`),{status:400});
-  const point={lat:Number(x.lat),lon:Number(x.lon),displayName:x.display_name||address};
-  freeGeocodeCache.set(key,point); if(freeGeocodeCache.size>300) freeGeocodeCache.delete(freeGeocodeCache.keys().next().value);
-  await new Promise(resolve=>setTimeout(resolve,1050));
-  return point;
-}
-async function freeRouteMatrix(addresses){
-  const coords=[]; for(const a of addresses) coords.push(await freeGeocode(a));
-  const coordText=coords.map(x=>`${x.lon},${x.lat}`).join(';');
-  const r=await fetch(`https://router.project-osrm.org/table/v1/driving/${coordText}?annotations=duration,distance`,{headers:{'User-Agent':'PerrasERP/42.2 route-demo'}});
-  const data=await r.json().catch(()=>null);
-  if(!r.ok || !data || data.code!=='Ok') throw Object.assign(new Error(data?.message||`Routage gratuit HTTP ${r.status}`),{status:502});
-  const n=addresses.length,m=Array.from({length:n},()=>Array.from({length:n},()=>({seconds:0,meters:0})));
-  for(let i=0;i<n;i++)for(let j=0;j<n;j++)m[i][j]={seconds:Math.round(Number(data.durations?.[i]?.[j]||0)),meters:Math.round(Number(data.distances?.[i]?.[j]||0))};
-  return m;
-}
-async function freeRouteGeometry(addresses){
-  const coords=[]; for(const a of addresses) coords.push(await freeGeocode(a));
-  const coordText=coords.map(x=>`${x.lon},${x.lat}`).join(';');
-  const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${coordText}?overview=full&geometries=geojson&steps=false`,{headers:{'User-Agent':'PerrasERP/42.3 map-demo'}});
-  const data=await r.json().catch(()=>null);
-  if(!r.ok || !data || data.code!=='Ok' || !data.routes?.[0]) throw Object.assign(new Error(data?.message||`Carte routière HTTP ${r.status}`),{status:502});
-  return {points:coords.map((x,i)=>({lat:x.lat,lon:x.lon,label:i===0?'Départ':String(i),address:addresses[i]})),geometry:data.routes[0].geometry,distance:Number(data.routes[0].distance||0),duration:Number(data.routes[0].duration||0)};
-}
-async function perrasRouteMatrix(addresses,traffic=true){
-  if(ROUTE_PROVIDER==='google') return {matrix:await googleRouteMatrix(addresses,traffic),provider:'Google Routes API',traffic};
-  if(ROUTE_PROVIDER==='free') return {matrix:await freeRouteMatrix(addresses),provider:'OpenStreetMap / OSRM (essai gratuit)',traffic:false};
-  if(GOOGLE_MAPS_API_KEY){
-    try{return {matrix:await googleRouteMatrix(addresses,traffic),provider:'Google Routes API',traffic};}
-    catch(e){if(![401,403,429,502,503].includes(Number(e.status||0)))throw e;}
-  }
-  return {matrix:await freeRouteMatrix(addresses),provider:'OpenStreetMap / OSRM (essai gratuit)',traffic:false};
-}
-function routeCost(order,matrix,endIndex=null){let seconds=0,meters=0,from=0;for(const stopIndex of order){const x=matrix[from][stopIndex+1]||{};seconds+=Number(x.seconds||0);meters+=Number(x.meters||0);from=stopIndex+1;}if(endIndex!=null){const x=matrix[from][endIndex]||{};seconds+=Number(x.seconds||0);meters+=Number(x.meters||0);}return {seconds,meters};}
-function optimizeLockedOrder(stops,matrix,mode='farthest',endIndex=null){
-  const order=stops.map((_,i)=>i),flex=order.filter(i=>!stops[i].locked); if(flex.length<2)return order;
-  if(mode==='farthest'){
-    const sorted=flex.slice().sort((a,b)=>Number(matrix[0]?.[b+1]?.meters||0)-Number(matrix[0]?.[a+1]?.meters||0));
-    const out=order.slice(); flex.forEach((slot,k)=>{out[slot]=sorted[k]}); return out;
-  }
-  let best=order.slice(),bestCost=routeCost(best,matrix,endIndex).seconds;
-  let changed=true,passes=0;
-  while(changed && passes++<12){changed=false;for(let a=0;a<flex.length;a++)for(let b=a+1;b<flex.length;b++){const ia=flex[a],ib=flex[b],cand=best.slice();[cand[ia],cand[ib]]=[cand[ib],cand[ia]];const c=routeCost(cand,matrix,endIndex).seconds;if(c+1<bestCost){best=cand;bestCost=c;changed=true;}}}
-  return best;
-}
-
 function readJson(file,fallback={}){try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch(_){return fallback;}}
 function writeJson(file,value){fs.writeFileSync(file,JSON.stringify(value,null,2),'utf8');return value;}
 function normalizePhone(v){ return String(v||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,''); }
@@ -571,22 +500,19 @@ const server=http.createServer(async (req,res)=>{
   const onlineUser=await online.sessionUser(req);
   if(url.pathname.startsWith('/api/') && !isPublicWebhook && !onlineUser) return json(res,401,{ok:false,error:'Connexion requise'});
 
-  if(req.method==='GET' && url.pathname==='/api/routes/status') return json(res,200,{ok:true,configured:true,provider:ROUTE_PROVIDER==='google'?'Google Routes API':(ROUTE_PROVIDER==='free'?'OpenStreetMap / OSRM (essai gratuit)':(GOOGLE_MAPS_API_KEY?'AUTO: Google puis gratuit':'OpenStreetMap / OSRM (essai gratuit)'))});
-  if(req.method==='POST' && url.pathname==='/api/routes/analyze'){
-    try{
-      const b=await parseBody(req),startAddress=String(b.startAddress||'').trim(),endAddress=String(b.endAddress||'').trim(),stops=Array.isArray(b.stops)?b.stops.slice(0,20):[],traffic=b.traffic!==false;
-      if(!startAddress)return json(res,400,{ok:false,error:'Adresse de départ manquante.'});
-      if(stops.length<2)return json(res,400,{ok:false,error:'Au moins 2 rendez-vous sont requis.'});
-      if(stops.some(x=>!String(x.address||'').trim()))return json(res,400,{ok:false,error:'Une adresse de rendez-vous est manquante.'});
-      const addresses=[startAddress,...stops.map(x=>x.address),...(endAddress?[endAddress]:[])],routeResult=await perrasRouteMatrix(addresses,traffic),matrix=routeResult.matrix,endIndex=endAddress?addresses.length-1:null,currentOrder=stops.map((_,i)=>i),suggestedOrder=optimizeLockedOrder(stops,matrix,String(b.mode||'farthest'),endIndex),current=routeCost(currentOrder,matrix,endIndex),suggested=routeCost(suggestedOrder,matrix,endIndex);
-      const legs=[];let from=0;for(const idx of suggestedOrder){const x=matrix[from][idx+1]||{};legs.push({stopIndex:idx,seconds:Number(x.seconds||0),meters:Number(x.meters||0)});from=idx+1;}
-      let map=null,currentMap=null;try{map=await freeRouteGeometry([startAddress,...suggestedOrder.map(i=>stops[i].address),...(endAddress?[endAddress]:[])]);}catch(mapErr){console.warn('Carte V42.3:',mapErr.message);}
-      try{currentMap=await freeRouteGeometry([startAddress,...currentOrder.map(i=>stops[i].address),...(endAddress?[endAddress]:[])]);}catch(mapErr){console.warn('Carte actuelle V42.6:',mapErr.message);}
-      return json(res,200,{ok:true,provider:routeResult.provider,traffic:routeResult.traffic,startAddress,endAddress,current,suggested,suggestedOrder,legs,map,currentMap,savedSeconds:Math.max(0,current.seconds-suggested.seconds),savedMeters:Math.max(0,current.meters-suggested.meters)});
-    }catch(e){return json(res,e.status||500,{ok:false,error:e.message||'Erreur de calcul de tournée'});}
-  }
   if(req.method==='GET' && url.pathname==='/api/cloud/bootstrap'){
     const rows=await online.getStateAll(),now=new Date().toISOString();return json(res,200,{ok:true,user:onlineUser,rows,serverTime:now,storage:online.mode()});
+  }
+
+  // V42.9 — export Admin des données réellement utilisées en ligne (sans Shell Render).
+  if(req.method==='GET' && url.pathname==='/api/admin/export-inventory-data'){
+    if(String(onlineUser?.role||'')!=='admin')return json(res,403,{ok:false,error:'Admin seulement'});
+    try{
+      const rows=await online.getStateAll(),state={};for(const r of rows)state[r.key]=r.value;
+      const payload={exportedAt:new Date().toISOString(),source:'Perras ERP en ligne',storage:online.mode(),supplierCategories:Array.isArray(state.supplierCategories)?state.supplierCategories:[],suppliers:Array.isArray(state.suppliers)?state.suppliers:[],truckStock:Array.isArray(state.truckStock)?state.truckStock:[],products:productStore};
+      const body=JSON.stringify(payload,null,2),stamp=new Date().toISOString().slice(0,10);
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Content-Disposition':`attachment; filename=perras-donnees-en-ligne-${stamp}.json`,'Cache-Control':'no-store'});return res.end(body);
+    }catch(e){return json(res,500,{ok:false,error:String(e.message||e)});}
   }
   if(req.method==='GET' && url.pathname==='/api/cloud/changes'){
     const rows=await online.getStateChanges(url.searchParams.get('since')||'1970-01-01T00:00:00.000Z');return json(res,200,{ok:true,rows,serverTime:new Date().toISOString()});
@@ -614,7 +540,7 @@ const server=http.createServer(async (req,res)=>{
   if(req.method==='POST' && url.pathname==='/api/inventory/transfer'){
     try{
       const body=await parseBody(req),productId=String(body.productId||''),direction=String(body.direction||''),qty=num(body.qty,0);
-      if(!productId||!['shop-to-truck','truck-to-shop'].includes(direction)||!(qty>0)||!Number.isInteger(qty))return json(res,400,{ok:false,error:'La quantité doit être un nombre entier positif.'});
+      if(!productId||!['shop-to-truck','truck-to-shop'].includes(direction)||!(qty>0))return json(res,400,{ok:false,error:'Transfert invalide'});
       const truckId=onlineUser.role==='tech'?String(onlineUser.truckId||''):String(body.truckId||'');
       if(!truckId)return json(res,400,{ok:false,error:'Aucun camion assigné'});
       const p=productByIdMap.get(productId);if(!p)return json(res,404,{ok:false,error:'Produit introuvable'});
@@ -642,7 +568,7 @@ const server=http.createServer(async (req,res)=>{
       if(!documentId)return json(res,400,{ok:false,error:'Document manquant'});
       const normalizeLines=arr=>{
         const map=new Map();
-        for(const x of Array.isArray(arr)?arr:[]){const productId=String(x?.productId||'');const qty=num(x?.qty,0);if(!productId||!(qty>0))continue;if(!Number.isInteger(qty))throw new Error('Les quantités de produits doivent être des nombres entiers.');map.set(productId,(map.get(productId)||0)+qty);}
+        for(const x of Array.isArray(arr)?arr:[]){const productId=String(x?.productId||'');const qty=num(x?.qty,0);if(!productId||!(qty>0))continue;map.set(productId,(map.get(productId)||0)+qty);}
         return [...map].map(([productId,qty])=>({productId,qty}));
       };
       const nextLines=normalizeLines(body.materials),legacyLines=normalizeLines(body.previousMaterials);
@@ -685,7 +611,7 @@ const server=http.createServer(async (req,res)=>{
   }
 
   /* ===================== Catalogue produits persistant ===================== */
-  if(req.method==='GET' && url.pathname==='/api/products/search-health') return json(res,200,{ok:true,version:'41.6',products:productStore.length,indexTokens:productTokenIndex.size,speedwayToken:productTokenIndex.get('flexiblehose')?.size||0,halfInchToken:productTokenIndex.get('dim0.5')?.size||0});
+  if(req.method==='GET' && url.pathname==='/api/products/search-health') return json(res,200,{ok:true,version:'41.4',products:productStore.length,indexTokens:productTokenIndex.size,speedwayToken:productTokenIndex.get('flexiblehose')?.size||0,halfInchToken:productTokenIndex.get('dim0.5')?.size||0});
   if(req.method==='GET' && url.pathname==='/api/products/duplicates'){
     if(onlineUser.role!=='admin')return json(res,403,{ok:false,error:'Admin seulement'});
     const groups=duplicateGroups();return json(res,200,{ok:true,groups,totalGroups:groups.length,totalProducts:groups.reduce((n,g)=>n+g.items.length,0)});
