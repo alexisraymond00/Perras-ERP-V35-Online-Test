@@ -310,6 +310,30 @@ function parseBody(req){
     req.on('error',reject);
   });
 }
+
+const GOOGLE_MAPS_API_KEY = String(process.env.GOOGLE_MAPS_API_KEY||'').trim();
+function routeSeconds(v){const m=String(v||'0s').match(/^([0-9.]+)s$/);return m?Math.round(Number(m[1])):0;}
+async function googleRouteMatrix(addresses,traffic=true){
+  if(!GOOGLE_MAPS_API_KEY) throw Object.assign(new Error('GOOGLE_MAPS_API_KEY non configurée sur Render.'),{status:503});
+  const points=addresses.map(a=>({waypoint:{address:String(a||'').trim()}}));
+  if(points.some(x=>!x.waypoint.address)) throw Object.assign(new Error('Une adresse de tournée est manquante.'),{status:400});
+  const body={origins:points,destinations:points,travelMode:'DRIVE',routingPreference:traffic?'TRAFFIC_AWARE':'TRAFFIC_UNAWARE',languageCode:'fr-CA',regionCode:'ca',units:'METRIC'};
+  const r=await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':GOOGLE_MAPS_API_KEY,'X-Goog-FieldMask':'originIndex,destinationIndex,status,condition,distanceMeters,duration,staticDuration'},body:JSON.stringify(body)});
+  const text=await r.text(); let data; try{data=JSON.parse(text)}catch(_){data=null}
+  if(!r.ok) throw Object.assign(new Error(data?.error?.message||`Google Routes HTTP ${r.status}`),{status:r.status===429?429:502});
+  const n=addresses.length,m=Array.from({length:n},()=>Array.from({length:n},()=>({seconds:0,meters:0})));
+  for(const e of Array.isArray(data)?data:[]){if(e.status && e.status.code)continue; m[e.originIndex][e.destinationIndex]={seconds:routeSeconds(e.duration),meters:Number(e.distanceMeters||0)};}
+  return m;
+}
+function routeCost(order,matrix){let seconds=0,meters=0,from=0;for(const stopIndex of order){const x=matrix[from][stopIndex+1]||{};seconds+=Number(x.seconds||0);meters+=Number(x.meters||0);from=stopIndex+1;}return {seconds,meters};}
+function optimizeLockedOrder(stops,matrix){
+  const order=stops.map((_,i)=>i),flex=order.filter(i=>!stops[i].locked); if(flex.length<2)return order;
+  let best=order.slice(),bestCost=routeCost(best,matrix).seconds;
+  let changed=true,passes=0;
+  while(changed && passes++<12){changed=false;for(let a=0;a<flex.length;a++)for(let b=a+1;b<flex.length;b++){const ia=flex[a],ib=flex[b],cand=best.slice();[cand[ia],cand[ib]]=[cand[ib],cand[ia]];const c=routeCost(cand,matrix).seconds;if(c+1<bestCost){best=cand;bestCost=c;changed=true;}}}
+  return best;
+}
+
 function readJson(file,fallback={}){try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch(_){return fallback;}}
 function writeJson(file,value){fs.writeFileSync(file,JSON.stringify(value,null,2),'utf8');return value;}
 function normalizePhone(v){ return String(v||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,''); }
@@ -500,6 +524,18 @@ const server=http.createServer(async (req,res)=>{
   const onlineUser=await online.sessionUser(req);
   if(url.pathname.startsWith('/api/') && !isPublicWebhook && !onlineUser) return json(res,401,{ok:false,error:'Connexion requise'});
 
+  if(req.method==='GET' && url.pathname==='/api/routes/status') return json(res,200,{ok:true,configured:!!GOOGLE_MAPS_API_KEY,provider:'Google Routes API'});
+  if(req.method==='POST' && url.pathname==='/api/routes/analyze'){
+    try{
+      const b=await parseBody(req),startAddress=String(b.startAddress||'').trim(),stops=Array.isArray(b.stops)?b.stops.slice(0,20):[],traffic=b.traffic!==false;
+      if(!startAddress)return json(res,400,{ok:false,error:'Adresse de départ manquante.'});
+      if(stops.length<2)return json(res,400,{ok:false,error:'Au moins 2 rendez-vous sont requis.'});
+      if(stops.some(x=>!String(x.address||'').trim()))return json(res,400,{ok:false,error:'Une adresse de rendez-vous est manquante.'});
+      const matrix=await googleRouteMatrix([startAddress,...stops.map(x=>x.address)],traffic),currentOrder=stops.map((_,i)=>i),suggestedOrder=optimizeLockedOrder(stops,matrix),current=routeCost(currentOrder,matrix),suggested=routeCost(suggestedOrder,matrix);
+      const legs=[];let from=0;for(const idx of suggestedOrder){const x=matrix[from][idx+1]||{};legs.push({stopIndex:idx,seconds:Number(x.seconds||0),meters:Number(x.meters||0)});from=idx+1;}
+      return json(res,200,{ok:true,provider:'Google Routes API',traffic,current,suggested,suggestedOrder,legs,savedSeconds:Math.max(0,current.seconds-suggested.seconds),savedMeters:Math.max(0,current.meters-suggested.meters)});
+    }catch(e){return json(res,e.status||500,{ok:false,error:e.message||'Erreur Google Routes'});}
+  }
   if(req.method==='GET' && url.pathname==='/api/cloud/bootstrap'){
     const rows=await online.getStateAll(),now=new Date().toISOString();return json(res,200,{ok:true,user:onlineUser,rows,serverTime:now,storage:online.mode()});
   }
