@@ -369,8 +369,12 @@ async function perrasRouteMatrix(addresses,traffic=true){
   return {matrix:await freeRouteMatrix(addresses),provider:'OpenStreetMap / OSRM (essai gratuit)',traffic:false};
 }
 function routeCost(order,matrix){let seconds=0,meters=0,from=0;for(const stopIndex of order){const x=matrix[from][stopIndex+1]||{};seconds+=Number(x.seconds||0);meters+=Number(x.meters||0);from=stopIndex+1;}return {seconds,meters};}
-function optimizeLockedOrder(stops,matrix){
+function optimizeLockedOrder(stops,matrix,mode='farthest'){
   const order=stops.map((_,i)=>i),flex=order.filter(i=>!stops[i].locked); if(flex.length<2)return order;
+  if(mode==='farthest'){
+    const sorted=flex.slice().sort((a,b)=>Number(matrix[0]?.[b+1]?.meters||0)-Number(matrix[0]?.[a+1]?.meters||0));
+    const out=order.slice(); flex.forEach((slot,k)=>{out[slot]=sorted[k]}); return out;
+  }
   let best=order.slice(),bestCost=routeCost(best,matrix).seconds;
   let changed=true,passes=0;
   while(changed && passes++<12){changed=false;for(let a=0;a<flex.length;a++)for(let b=a+1;b<flex.length;b++){const ia=flex[a],ib=flex[b],cand=best.slice();[cand[ia],cand[ib]]=[cand[ib],cand[ia]];const c=routeCost(cand,matrix).seconds;if(c+1<bestCost){best=cand;bestCost=c;changed=true;}}}
@@ -574,7 +578,7 @@ const server=http.createServer(async (req,res)=>{
       if(!startAddress)return json(res,400,{ok:false,error:'Adresse de départ manquante.'});
       if(stops.length<2)return json(res,400,{ok:false,error:'Au moins 2 rendez-vous sont requis.'});
       if(stops.some(x=>!String(x.address||'').trim()))return json(res,400,{ok:false,error:'Une adresse de rendez-vous est manquante.'});
-      const routeResult=await perrasRouteMatrix([startAddress,...stops.map(x=>x.address)],traffic),matrix=routeResult.matrix,currentOrder=stops.map((_,i)=>i),suggestedOrder=optimizeLockedOrder(stops,matrix),current=routeCost(currentOrder,matrix),suggested=routeCost(suggestedOrder,matrix);
+      const routeResult=await perrasRouteMatrix([startAddress,...stops.map(x=>x.address)],traffic),matrix=routeResult.matrix,currentOrder=stops.map((_,i)=>i),suggestedOrder=optimizeLockedOrder(stops,matrix,String(b.mode||'farthest')),current=routeCost(currentOrder,matrix),suggested=routeCost(suggestedOrder,matrix);
       const legs=[];let from=0;for(const idx of suggestedOrder){const x=matrix[from][idx+1]||{};legs.push({stopIndex:idx,seconds:Number(x.seconds||0),meters:Number(x.meters||0)});from=idx+1;}
       let map=null;try{map=await freeRouteGeometry([startAddress,...suggestedOrder.map(i=>stops[i].address)]);}catch(mapErr){console.warn('Carte V42.3:',mapErr.message);}
       return json(res,200,{ok:true,provider:routeResult.provider,traffic:routeResult.traffic,current,suggested,suggestedOrder,legs,map,savedSeconds:Math.max(0,current.seconds-suggested.seconds),savedMeters:Math.max(0,current.meters-suggested.meters)});
