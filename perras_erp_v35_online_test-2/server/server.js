@@ -580,8 +580,9 @@ const server=http.createServer(async (req,res)=>{
       if(stops.some(x=>!String(x.address||'').trim()))return json(res,400,{ok:false,error:'Une adresse de rendez-vous est manquante.'});
       const addresses=[startAddress,...stops.map(x=>x.address),...(endAddress?[endAddress]:[])],routeResult=await perrasRouteMatrix(addresses,traffic),matrix=routeResult.matrix,endIndex=endAddress?addresses.length-1:null,currentOrder=stops.map((_,i)=>i),suggestedOrder=optimizeLockedOrder(stops,matrix,String(b.mode||'farthest'),endIndex),current=routeCost(currentOrder,matrix,endIndex),suggested=routeCost(suggestedOrder,matrix,endIndex);
       const legs=[];let from=0;for(const idx of suggestedOrder){const x=matrix[from][idx+1]||{};legs.push({stopIndex:idx,seconds:Number(x.seconds||0),meters:Number(x.meters||0)});from=idx+1;}
-      let map=null;try{map=await freeRouteGeometry([startAddress,...suggestedOrder.map(i=>stops[i].address),...(endAddress?[endAddress]:[])]);}catch(mapErr){console.warn('Carte V42.3:',mapErr.message);}
-      return json(res,200,{ok:true,provider:routeResult.provider,traffic:routeResult.traffic,startAddress,endAddress,current,suggested,suggestedOrder,legs,map,savedSeconds:Math.max(0,current.seconds-suggested.seconds),savedMeters:Math.max(0,current.meters-suggested.meters)});
+      let map=null,currentMap=null;try{map=await freeRouteGeometry([startAddress,...suggestedOrder.map(i=>stops[i].address),...(endAddress?[endAddress]:[])]);}catch(mapErr){console.warn('Carte V42.3:',mapErr.message);}
+      try{currentMap=await freeRouteGeometry([startAddress,...currentOrder.map(i=>stops[i].address),...(endAddress?[endAddress]:[])]);}catch(mapErr){console.warn('Carte actuelle V42.6:',mapErr.message);}
+      return json(res,200,{ok:true,provider:routeResult.provider,traffic:routeResult.traffic,startAddress,endAddress,current,suggested,suggestedOrder,legs,map,currentMap,savedSeconds:Math.max(0,current.seconds-suggested.seconds),savedMeters:Math.max(0,current.meters-suggested.meters)});
     }catch(e){return json(res,e.status||500,{ok:false,error:e.message||'Erreur de calcul de tournée'});}
   }
   if(req.method==='GET' && url.pathname==='/api/cloud/bootstrap'){
